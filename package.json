@@ -1,0 +1,26 @@
+{
+  "name": "agents-obsidian",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "inbox": "dist/inbox.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12"
+  }
+}
