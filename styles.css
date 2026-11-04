@@ -39,3 +39,11 @@
 .agents-inbox-empty {
   color: var(--text-muted);
 }
+
+.agents-inbox-card.is-busy {
+  opacity: 0.6;
+}
+
+.agents-inbox-option.is-recommended {
+  font-weight: var(--font-semibold);
+}

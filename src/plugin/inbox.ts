@@ -37,6 +37,7 @@ export function listAwaiting(docs: string): { groups: Group[]; broken: Broken[] 
         const item = readItem(path);
         if (item.status === "awaiting-you") entries.push({ id: name.slice(0, -3), path, item });
       } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
         broken.push({ path, error: (error as Error).message });
       }
     }
