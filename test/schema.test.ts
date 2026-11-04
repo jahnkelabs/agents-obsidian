@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parse, SchemaError, serialize } from "../src/schema";
+import { expectHandStyleKept, frontmatter, HAND } from "./hand";
 
 const VALID = `---
 type: inbox
@@ -30,8 +31,16 @@ function replaceLine(key: string, line: string): string {
 }
 
 describe("schema", () => {
-  it("round-trips a valid item byte for byte", () => {
+  it("round-trips an item serialize wrote byte for byte", () => {
     expect(serialize(parse(VALID))).toBe(VALID);
+  });
+
+  it("keeps a hand-formatted item's values, comments, quotes, flow style, key order, and unknown keys", () => {
+    const after = serialize(parse(HAND));
+
+    expect(frontmatter(after)).toEqual(frontmatter(HAND));
+    expectHandStyleKept(after);
+    expect(parse(after).body).toBe(parse(HAND).body);
   });
 
   it("keeps the body verbatim", () => {
@@ -51,13 +60,19 @@ describe("schema", () => {
     ["created_at", replaceLine("created_at", "created_at: yesterday")],
     ["answered_at", replaceLine("answered_at", "answered_at: null")],
     ["note", VALID.replace(/^note:.*\n/m, "")],
-    ["colour", VALID.replace("type: inbox\n", "type: inbox\ncolour: red\n")],
     ["body", VALID.slice(0, VALID.indexOf("**Deciding"))],
     ["frontmatter", VALID.slice(4)],
   ])("rejects a malformed %s with a message naming it", (field, text) => {
     expect(() => parse(text)).toThrow(SchemaError);
     expect(() => parse(text)).toThrow(new RegExp(`^${field}:`));
   });
+
+  it.each(["1", "Nov 3", "2026", "11/03/2026", "2026-11-03", "2026-11-03T05:30:00", "2026-11-03 05:30:00Z"])(
+    "rejects the timestamp %s",
+    (value) => {
+      expect(() => parse(replaceLine("created_at", `created_at: "${value}"`))).toThrow(/^created_at:/);
+    },
+  );
 
   it("rejects an answer on an item still awaiting you", () => {
     const text = replaceLine("status", "status: awaiting-you");

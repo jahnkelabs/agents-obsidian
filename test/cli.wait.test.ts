@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
@@ -56,5 +56,47 @@ describe("inbox wait", () => {
     const result = inbox(docs, ["wait", id]);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("frontmatter:");
+  });
+
+  it("keeps waiting through a transient bad read", async () => {
+    const docs = tempDocs();
+    const id = ask(docs);
+    const path = join(docs, "inbox", `${id}.md`);
+    const text = readFileSync(path, "utf8");
+    const waiting = inboxAsync(docs, ["wait", id]);
+
+    await sleep(300);
+    writeFileSync(path, "");
+    await sleep(1500);
+    writeFileSync(path, text);
+    await sleep(1500);
+    expect(waiting.exited()).toBe(false);
+
+    expect(inbox(docs, ["answer", id, "--text", "go"]).status).toBe(0);
+    expect((await waiting).status).toBe(0);
+  });
+
+  it("exits 2 naming the item when it disappears during a wait", async () => {
+    const docs = tempDocs();
+    const id = ask(docs);
+    const waiting = inboxAsync(docs, ["wait", id]);
+
+    await sleep(300);
+    rmSync(join(docs, "inbox", `${id}.md`));
+    const result = await waiting;
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain(`no inbox item ${id}`);
+  });
+
+  it("exits 2 for a malformed timestamp", () => {
+    const docs = tempDocs();
+    const id = ask(docs);
+    const path = join(docs, "inbox", `${id}.md`);
+    writeFileSync(path, readFileSync(path, "utf8").replace(/^created_at:.*$/m, "created_at: 11/03/2026"));
+
+    const result = inbox(docs, ["wait", id, "--timeout", "0"]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("created_at:");
   });
 });

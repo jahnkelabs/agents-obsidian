@@ -1,12 +1,14 @@
+import { readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
-import { type Answerer, type Item, type Kind } from "../schema";
+import { type Answerer, type Item, type Kind, SchemaError } from "../schema";
 import { answerItem, answerOf, createItem, docsDir, findItem, readItem } from "../store";
 
 const EXIT_ERROR = 2;
 const EXIT_LOST = 3;
 const EXIT_TIMEOUT = 4;
 const POLL_MS = 1000;
+const MAX_BAD_READS = 3;
 
 const USAGE = `usage:
   inbox ask --kind <kind> --from "<skill> · <session>" [--map <slug> [--concern <slug>]]
@@ -18,7 +20,7 @@ const commands: Record<string, (args: string[]) => Promise<number>> = { ask, wai
 
 const [command = "", ...args] = process.argv.slice(2);
 try {
-  const run = commands[command];
+  const run = Object.hasOwn(commands, command) ? commands[command] : undefined;
   if (!run) throw new Error(USAGE);
   process.exitCode = await run(args);
 } catch (error) {
@@ -53,7 +55,7 @@ async function ask(args: string[]): Promise<number> {
     answered_by: null,
     created_at: new Date().toISOString(),
     answered_at: null,
-    body: await readStdin(),
+    body: readFileSync(0, "utf8"),
   };
   console.log(createItem(docsDir(), item));
   return 0;
@@ -66,20 +68,31 @@ async function wait(args: string[]): Promise<number> {
     options: { timeout: { type: "string" } },
   });
   const path = locate(positionals);
+  const [id] = positionals;
 
   const timeout = values.timeout === undefined ? Infinity : Number(values.timeout);
   if (!(timeout >= 0)) throw new Error("--timeout must be a number of seconds");
   const deadline = Date.now() + timeout * 1000;
 
+  let badReads = 0;
   for (;;) {
-    const item = readItem(path);
-    if (item.status === "answered") {
-      console.log(JSON.stringify(answerOf(item)));
-      return 0;
+    try {
+      const item = readItem(path);
+      badReads = 0;
+      if (item.status === "answered") {
+        console.log(JSON.stringify(answerOf(item)));
+        return 0;
+      }
+    } catch (error) {
+      const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
+      if (!missing && !(error instanceof SchemaError)) throw error;
+      if (++badReads > MAX_BAD_READS || Date.now() >= deadline) {
+        throw missing ? new Error(`no inbox item ${id}`) : error;
+      }
     }
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
-      console.error(`inbox: timed out waiting on ${positionals[0]}`);
+      console.error(`inbox: timed out waiting on ${id}`);
       return EXIT_TIMEOUT;
     }
     await sleep(Math.min(POLL_MS, remaining));
@@ -102,12 +115,8 @@ async function answer(args: string[]): Promise<number> {
   }
   const path = locate(positionals);
 
-  if (values.option !== undefined && !readItem(path).options.includes(values.option)) {
-    throw new Error(`answer: ${values.option} is not one of the options`);
-  }
-
   const { won, item } = await answerItem(path, {
-    answer: values.option ?? values.text ?? null,
+    answer: (values.option ?? values.text)!,
     note: values.note ?? null,
     answered_by: values.by as Answerer,
   });
@@ -121,10 +130,4 @@ function locate(positionals: string[]): string {
   const path = findItem(docsDir(), id);
   if (path === null) throw new Error(`no inbox item ${id}`);
   return path;
-}
-
-async function readStdin(): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
-  return Buffer.concat(chunks).toString("utf8");
 }

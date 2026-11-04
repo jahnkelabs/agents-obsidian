@@ -42,6 +42,12 @@ const FIELDS = [
   "answered_at",
 ] as const;
 
+const SOURCE = Symbol("source");
+
+type Sourced = Item & { [SOURCE]?: Document };
+
+const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+
 const FENCE = "---\n";
 const CLOSING_FENCE = "\n---\n";
 
@@ -76,24 +82,23 @@ export function parse(text: string): Item {
     throw new SchemaError("body", "unknown field");
   }
 
-  const item = { ...data, body: text.slice(end + CLOSING_FENCE.length) };
+  const fields = Object.fromEntries(FIELDS.filter((field) => field in data).map((field) => [field, (data as Record<string, unknown>)[field]]));
+  const item = { ...fields, body: text.slice(end + CLOSING_FENCE.length), [SOURCE]: doc };
   validate(item);
   return item;
 }
 
 export function serialize(item: Item): string {
   validate(item);
-  const ordered = Object.fromEntries(FIELDS.map((field) => [field, item[field]]));
-  const frontmatter = new Document(ordered).toString({ lineWidth: 0 });
-  return `${FENCE}${frontmatter}---\n${item.body}`;
+  const doc = (item as Sourced)[SOURCE]?.clone() ?? new Document({});
+  const current = doc.toJS() as Record<string, unknown>;
+  for (const field of FIELDS) {
+    if (JSON.stringify(current[field]) !== JSON.stringify(item[field])) doc.set(field, doc.createNode(item[field]));
+  }
+  return `${FENCE}${doc.toString({ lineWidth: 0 })}---\n${item.body}`;
 }
 
 export function validate(value: object): asserts value is Item {
-  for (const key of Object.keys(value)) {
-    if (key !== "body" && !(FIELDS as readonly string[]).includes(key)) {
-      throw new SchemaError(key, "unknown field");
-    }
-  }
   for (const field of FIELDS) {
     if (!(field in value)) throw new SchemaError(field, "missing");
   }
@@ -143,5 +148,5 @@ function isSlug(value: unknown): boolean {
 }
 
 function isTimestamp(value: unknown): boolean {
-  return typeof value === "string" && !Number.isNaN(Date.parse(value));
+  return typeof value === "string" && TIMESTAMP.test(value) && !Number.isNaN(Date.parse(value));
 }

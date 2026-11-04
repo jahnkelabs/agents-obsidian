@@ -7,7 +7,7 @@
     "inbox": "dist/inbox.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19.0"
   },
   "scripts": {
     "build": "node esbuild.config.mjs",

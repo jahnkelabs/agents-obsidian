@@ -1,7 +1,8 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { onTestFinished } from "vitest";
 
 const CLI = join(import.meta.dirname, "..", "dist", "inbox.js");
 
@@ -11,8 +12,14 @@ export interface Result {
   stderr: string;
 }
 
+export function tempDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "inbox-"));
+  onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
 export function tempDocs(...maps: string[]): string {
-  const docs = mkdtempSync(join(tmpdir(), "inbox-"));
+  const docs = tempDir();
   for (const map of maps) mkdirSync(join(docs, "maps", map), { recursive: true });
   return docs;
 }
@@ -26,9 +33,9 @@ export function inbox(docs: string, args: string[], input = ""): Result {
   return { status, stdout, stderr };
 }
 
-export function inboxAsync(docs: string, args: string[]): Promise<Result> & { exited: () => boolean } {
+export function inboxAsync(docs: string, args: string[], input = ""): Promise<Result> & { exited: () => boolean } {
   const child = spawn("node", [CLI, ...args], { env: { ...process.env, INBOX_DOCS_DIR: docs } });
-  child.stdin.end();
+  child.stdin.end(input);
   let stdout = "";
   let stderr = "";
   let done = false;
