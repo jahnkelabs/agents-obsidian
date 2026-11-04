@@ -1,0 +1,41 @@
+.agents-inbox-group {
+  margin-bottom: var(--size-4-4);
+}
+
+.agents-inbox-group-title {
+  margin: var(--size-4-2) 0;
+  color: var(--text-muted);
+}
+
+.agents-inbox-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: var(--size-4-3);
+  margin-bottom: var(--size-4-3);
+}
+
+.agents-inbox-broken {
+  border-color: var(--text-error);
+}
+
+.agents-inbox-broken-error,
+.agents-inbox-result {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.agents-inbox-note {
+  width: 100%;
+  min-height: 3em;
+  margin: var(--size-4-2) 0;
+}
+
+.agents-inbox-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-2);
+}
+
+.agents-inbox-empty {
+  color: var(--text-muted);
+}
