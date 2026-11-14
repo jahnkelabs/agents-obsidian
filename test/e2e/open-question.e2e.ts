@@ -1,5 +1,5 @@
 import { expect } from "@wdio/globals";
-import { card, itemAt, M2_OPEN_QUESTION, openInbox, readBytes, reset } from "./helpers";
+import { answerButton, itemAt, M2_OPEN_QUESTION, openItem, readBytes, reset, row, tab } from "./helpers";
 
 const ID = "m2-open-question";
 
@@ -8,25 +8,24 @@ describe("an item with no options", () => {
 
   it("refuses an empty note and leaves the file unchanged", async () => {
     const before = readBytes(M2_OPEN_QUESTION);
-    await openInbox();
-    const submit = card(ID).$("button.agents-inbox-submit");
-    await expect(card(ID).$$("button.agents-inbox-option")).toBeElementsArrayOfSize(0);
-    await expect(submit).toBeDisabled();
+    await openItem(ID);
+    await expect(tab(ID).$$(".agents-inbox-choice")).toBeElementsArrayOfSize(0);
+    await expect(answerButton(ID)).toBeDisabled();
 
-    await card(ID).$("textarea.agents-inbox-note").setValue("   ");
-    await expect(submit).toBeDisabled();
+    await tab(ID).$("textarea.agents-inbox-note").setValue("   ");
+    await expect(answerButton(ID)).toBeDisabled();
 
     expect(readBytes(M2_OPEN_QUESTION).equals(before)).toBe(true);
-    await expect(card(ID)).toExist();
+    await expect(row(ID)).toExist();
   });
 
   it("takes the note as its answer", async () => {
-    await openInbox();
-    const submit = card(ID).$("button.agents-inbox-submit");
-    await card(ID).$("textarea.agents-inbox-note").setValue("Inbox panel");
-    await expect(submit).toBeEnabled();
-    await submit.click();
-    await card(ID).waitForExist({ reverse: true });
+    await openItem(ID);
+    await tab(ID).$("textarea.agents-inbox-note").setValue("Inbox panel");
+    await expect(answerButton(ID)).toBeEnabled();
+    await answerButton(ID).click();
+    await expect(tab(ID).$(".agents-inbox-result")).toHaveText("Answered by inbox: Inbox panel");
+    await row(ID).waitForExist({ reverse: true });
 
     const item = itemAt(M2_OPEN_QUESTION);
     expect(item.status).toBe("answered");

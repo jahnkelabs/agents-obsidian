@@ -1,38 +1,42 @@
 import { browser, expect } from "@wdio/globals";
 import {
+  answerButton,
   answerUnderLock,
-  ask,
-  card,
-  chatAnswersThenPanelClicks,
+  chatAnswersThenTabClicks,
+  choose,
+  expectNoControls,
   holdLock,
   itemAt,
   M1_ANSWERED,
   M1_NEWER,
-  openInbox,
+  openItem,
   readBytes,
   reset,
   rewrittenText,
+  row,
+  tab,
   waitForObsidianToSee,
 } from "./helpers";
 
-const WINNER = "Already answered by chat: beta";
+const WINNER = "Answered by chat: beta";
 
-describe("a card that chat already won", () => {
+describe("a tab whose answer chat already won", () => {
   beforeEach(reset);
 
-  it("shows the winning answer, writes nothing, and leaves at a later change dated after the answer", async () => {
-    await openInbox();
-    const alpha = card("m1-newer").$('button[data-option="alpha"]');
-    const result = card("m1-newer").$(".agents-inbox-result");
+  it("shows the winning answer and writes nothing when chat answers while the tab waits on the lock", async () => {
+    await openItem("m1-newer");
+    await choose("m1-newer", "alpha");
+    const submit = answerButton("m1-newer");
+    const result = tab("m1-newer").$(".agents-inbox-result");
 
     const release = holdLock(M1_NEWER);
     try {
       await browser.waitUntil(
         async () => {
-          if (await alpha.isEnabled()) await alpha.click();
-          return !(await alpha.isEnabled());
+          if (await submit.isEnabled()) await submit.click();
+          return !(await submit.isEnabled());
         },
-        { timeoutMsg: "the click never reached the panel" },
+        { timeoutMsg: "the click never reached the tab" },
       );
       answerUnderLock(M1_NEWER, "beta", "chat");
     } finally {
@@ -44,37 +48,37 @@ describe("a card that chat already won", () => {
     await waitForObsidianToSee(M1_NEWER, "chat");
     await browser.pause(250);
     await expect(result).toHaveText(WINNER);
-    await expect(card("m1-newer").$$("button")).toBeElementsArrayOfSize(0);
+    await expectNoControls(tab("m1-newer"));
     expect(readBytes(M1_NEWER).equals(written)).toBe(true);
     expect(itemAt(M1_NEWER).answer).toBe("beta");
     expect(itemAt(M1_NEWER).answered_by).toBe("chat");
-
-    ask([], "**Deciding — Next event**\n\nfound: new\n");
-    await card("m1-newer").waitForExist({ reverse: true });
-    expect(itemAt(M1_NEWER).answered_by).toBe("chat");
+    await row("m1-newer").waitForExist({ reverse: true });
   });
 
   it("keeps the winning answer after Obsidian sees chat's write, with no lock held", async () => {
-    await openInbox();
-    const result = card("m1-newer").$(".agents-inbox-result");
+    await openItem("m1-newer");
+    await choose("m1-newer", "alpha");
+    const result = tab("m1-newer").$(".agents-inbox-result");
 
-    const { clicked, text } = await chatAnswersThenPanelClicks(M1_NEWER, "beta", "m1-newer", "alpha");
+    const { clicked, text } = await chatAnswersThenTabClicks(M1_NEWER, "beta", "m1-newer", "button.agents-inbox-answer");
     expect(clicked).toBe(true);
 
     await expect(result).toHaveText(WINNER);
     await waitForObsidianToSee(M1_NEWER, "chat");
     await browser.pause(250);
     await expect(result).toHaveText(WINNER);
+    await expectNoControls(tab("m1-newer"));
     expect(readBytes(M1_NEWER).toString("utf8")).toBe(text);
     expect(itemAt(M1_NEWER).answered_by).toBe("chat");
   });
 
   it("keeps the winning answer when another inbox write lands before the click", async () => {
-    await openInbox();
-    const result = card("m1-newer").$(".agents-inbox-result");
+    await openItem("m1-newer");
+    await choose("m1-newer", "alpha");
+    const result = tab("m1-newer").$(".agents-inbox-result");
     const elsewhere = rewrittenText(M1_ANSWERED, { answered_by: "inbox" });
 
-    const { clicked } = await chatAnswersThenPanelClicks(M1_NEWER, "beta", "m1-newer", "alpha", {
+    const { clicked, text } = await chatAnswersThenTabClicks(M1_NEWER, "beta", "m1-newer", "button.agents-inbox-answer", {
       [M1_ANSWERED]: elsewhere,
     });
     expect(clicked).toBe(true);
@@ -84,6 +88,7 @@ describe("a card that chat already won", () => {
     await waitForObsidianToSee(M1_NEWER, "chat");
     await browser.pause(250);
     await expect(result).toHaveText(WINNER);
+    expect(readBytes(M1_NEWER).toString("utf8")).toBe(text);
     expect(itemAt(M1_NEWER).answered_by).toBe("chat");
   });
 });

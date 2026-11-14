@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { Item } from "../schema";
 import { readItem } from "../store";
@@ -45,25 +45,36 @@ export function listAwaiting(docs: string): { groups: Group[]; broken: Broken[] 
   return { groups: group(entries), broken };
 }
 
-export function mtimeOf(path: string): number | null {
-  try {
-    return statSync(path).mtimeMs;
-  } catch {
-    return null;
-  }
+export function lastAgentAt(item: Item): number | null {
+  const last = item.thread.filter((message) => message.author === "agent").at(-1);
+  return last === undefined ? null : Date.parse(last.at);
 }
 
-export function inboxMtimes(docs: string): Map<string, number> {
-  const mtimes = new Map<string, number>();
-  for (const dir of inboxDirs(docs)) {
-    for (const name of readdirSync(dir)) {
-      if (name.startsWith(".") || !name.endsWith(".md")) continue;
-      const path = join(dir, name);
-      const mtime = mtimeOf(path);
-      if (mtime !== null) mtimes.set(path, mtime);
-    }
-  }
-  return mtimes;
+export function unread(entry: Entry, seen: number | undefined): boolean {
+  const at = lastAgentAt(entry.item);
+  return at !== null && (seen === undefined || at > seen);
+}
+
+export function title(item: Item): string {
+  const line = item.body.split("\n").find((text) => text.trim() !== "") ?? "";
+  return (
+    line
+      .replace(/^\s*#+\s*/, "")
+      .replace(/\*\*|__|[*`]/g, "")
+      .trim() || item.kind
+  );
+}
+
+export function age(from: string, now: number): string {
+  const minutes = Math.floor((now - Date.parse(from)) / 60_000);
+  if (minutes < 1) return "now";
+  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 24 * 60) return `${Math.floor(minutes / 60)}h`;
+  return `${Math.floor(minutes / (24 * 60))}d`;
+}
+
+export function answerText(item: Item): string {
+  return Array.isArray(item.answer) ? item.answer.join(", ") : (item.answer ?? "");
 }
 
 function inboxDirs(docs: string): string[] {
@@ -75,7 +86,7 @@ function inboxDirs(docs: string): string[] {
   return dirs.filter((dir) => existsSync(dir));
 }
 
-export function group(entries: Entry[]): Group[] {
+function group(entries: Entry[]): Group[] {
   const byKey = new Map<string, Group>();
   for (const entry of entries) {
     const { map, concern } = entry.item;

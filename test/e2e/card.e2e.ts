@@ -1,40 +1,49 @@
 import { expect } from "@wdio/globals";
-import { card, cardIds, closeInbox, FIXTURES, openInbox, optionsOf, readBytes, reset } from "./helpers";
+import { choicesOf, closeInbox, FIXTURES, openInbox, openItem, readBytes, reset, rowIds, tab } from "./helpers";
 
-describe("a card", () => {
+describe("an item tab", () => {
   beforeEach(reset);
 
   it("renders the body as markdown", async () => {
-    await openInbox();
-    const body = card("m1-newer").$(".agents-inbox-body");
+    await openItem("m1-newer");
+    const body = tab("m1-newer").$(".agents-inbox-body");
     await expect(body.$("strong")).toHaveText("Deciding — m1 newer");
     await expect(body.$("table")).toExist();
     expect(await body.$$("table td").map((cell) => cell.getText())).toEqual(["1", "2"]);
   });
 
-  it("shows one button per option and marks the recommended one", async () => {
-    await openInbox();
-    expect(await optionsOf("m1-newer")).toEqual([
-      { option: "alpha", recommended: false },
-      { option: "beta", recommended: true },
+  it("shows one radio button per option on a pick-one item and marks the recommended one", async () => {
+    await openItem("m1-newer");
+    expect(await choicesOf("m1-newer")).toEqual([
+      { option: "alpha", type: "radio", recommended: false },
+      { option: "beta", type: "radio", recommended: true },
     ]);
-    expect(await optionsOf("root-question")).toEqual([
-      { option: "yes", recommended: true },
-      { option: "no", recommended: false },
+    await openItem("root-question");
+    expect(await choicesOf("root-question")).toEqual([
+      { option: "yes", type: "radio", recommended: true },
+      { option: "no", type: "radio", recommended: false },
     ]);
-    expect(await optionsOf("m1-earlier")).toEqual([{ option: "approve", recommended: false }]);
+    await openItem("m1-earlier");
+    expect(await choicesOf("m1-earlier")).toEqual([{ option: "approve", type: "radio", recommended: false }]);
   });
 
-  it("gives every card a note field", async () => {
+  it("gives every waiting item a note field", async () => {
     await openInbox();
-    for (const id of await cardIds()) await expect(card(id).$("textarea.agents-inbox-note")).toExist();
+    const ids = await rowIds();
+    expect(ids).toHaveLength(7);
+    for (const id of ids) {
+      await openItem(id);
+      await expect(tab(id).$("textarea.agents-inbox-note")).toExist();
+    }
   });
 
-  it("leaves every body on disk byte-identical after rendering", async () => {
+  it("leaves every file on disk byte-identical after rendering", async () => {
     const before = FIXTURES.map(readBytes);
     await openInbox();
+    const ids = await rowIds();
+    for (const id of ids) await openItem(id);
     await closeInbox();
-    await openInbox();
+    for (const id of ids) await openItem(id);
     FIXTURES.forEach((rel, n) => expect(readBytes(rel).equals(before[n])).toBe(true));
   });
 });

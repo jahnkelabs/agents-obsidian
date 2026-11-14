@@ -7,43 +7,136 @@
   color: var(--text-muted);
 }
 
-.agents-inbox-card {
-  border: 1px solid var(--background-modifier-border);
-  border-radius: var(--radius-m);
-  padding: var(--size-4-3);
-  margin-bottom: var(--size-4-3);
+.agents-inbox-row {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  padding: var(--size-4-1) var(--size-4-2);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.agents-inbox-row:hover,
+.agents-inbox-row:focus-visible {
+  background-color: var(--background-modifier-hover);
+}
+
+.agents-inbox-row-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents-inbox-row.is-unread .agents-inbox-row-title {
+  font-weight: var(--font-semibold);
+}
+
+.agents-inbox-unread {
+  flex: none;
+  width: 0.5em;
+  height: 0.5em;
+  border-radius: 50%;
+  background-color: var(--interactive-accent);
+}
+
+.agents-inbox-row-kind,
+.agents-inbox-row-age {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
 }
 
 .agents-inbox-broken {
-  border-color: var(--text-error);
+  display: block;
+  cursor: default;
+  border: 1px solid var(--text-error);
 }
 
 .agents-inbox-broken-error,
-.agents-inbox-result {
+.agents-inbox-result-note,
+.agents-inbox-item-meta,
+.agents-inbox-message-meta {
   color: var(--text-muted);
   font-size: var(--font-ui-small);
-}
-
-.agents-inbox-note {
-  width: 100%;
-  min-height: 3em;
-  margin: var(--size-4-2) 0;
-}
-
-.agents-inbox-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--size-4-2);
 }
 
 .agents-inbox-empty {
   color: var(--text-muted);
 }
 
-.agents-inbox-card.is-busy {
-  opacity: 0.6;
+.agents-inbox-thread {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-3);
+  margin: var(--size-4-4) 0;
 }
 
-.agents-inbox-option.is-recommended {
+.agents-inbox-message {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  padding: var(--size-4-2) var(--size-4-3);
+}
+
+.agents-inbox-message[data-author="you"] {
+  background-color: var(--background-secondary);
+}
+
+.agents-inbox-message-meta {
+  display: flex;
+  gap: var(--size-4-2);
+}
+
+.agents-inbox-message-author {
   font-weight: var(--font-semibold);
+}
+
+.agents-inbox-compose,
+.agents-inbox-answer-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  margin-bottom: var(--size-4-4);
+}
+
+.agents-inbox-composer,
+.agents-inbox-note {
+  width: 100%;
+  min-height: 4em;
+}
+
+.agents-inbox-send,
+.agents-inbox-answer {
+  align-self: flex-end;
+}
+
+.agents-inbox-choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-1);
+}
+
+.agents-inbox-choice {
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+}
+
+.agents-inbox-recommended {
+  color: var(--text-accent);
+  font-size: var(--font-ui-smaller);
+}
+
+.agents-inbox-result {
+  font-weight: var(--font-semibold);
+}
+
+.agents-inbox-missing {
+  color: var(--text-muted);
+}
+
+.agents-inbox-item.is-busy .agents-inbox-answer-section,
+.agents-inbox-item.is-busy .agents-inbox-compose {
+  opacity: 0.6;
 }
