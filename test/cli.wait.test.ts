@@ -17,7 +17,7 @@ describe("inbox wait", () => {
     const result = await waiting;
 
     expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ answer: "no", note: "later", answered_by: "chat" });
+    expect(JSON.parse(result.stdout)).toEqual({ event: "answer", answer: "no", note: "later", answered_by: "chat" });
   });
 
   it("exits 4 when the timeout expires on an unanswered item", async () => {
@@ -38,7 +38,7 @@ describe("inbox wait", () => {
 
     const result = inbox(docs, ["wait", id, "--timeout", "0"]);
     expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).answer).toBe("go");
+    expect(JSON.parse(result.stdout)).toMatchObject({ event: "answer", answer: "go" });
   });
 
   it("exits 2 for a missing item", () => {

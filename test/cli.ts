@@ -1,8 +1,9 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { onTestFinished } from "vitest";
+import { appendMessage } from "../src/store";
 
 const CLI = join(import.meta.dirname, "..", "dist", "inbox.js");
 
@@ -48,6 +49,18 @@ export function inboxAsync(docs: string, args: string[], input = ""): Promise<Re
     }),
   );
   return Object.assign(result, { exited: () => done });
+}
+
+export function itemPath(docs: string, id: string): string {
+  return join(docs, "inbox", `${id}.md`);
+}
+
+export function readText(docs: string, id: string): string {
+  return readFileSync(itemPath(docs, id), "utf8");
+}
+
+export function post(docs: string, id: string, text: string): ReturnType<typeof appendMessage> {
+  return appendMessage(itemPath(docs, id), { author: "you", at: new Date().toISOString(), text });
 }
 
 export function ask(docs: string, args: string[] = [], body = "**Deciding — Pick a library**\n\nfound: two\n"): string {

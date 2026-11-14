@@ -24,6 +24,8 @@ aliases:
 **Deciding — Ship or hold**
 `;
 
+export const C5_DEFAULTS = { select: "one", thread: [] };
+
 export function frontmatter(text: string): Record<string, unknown> {
   return parseDocument(text.slice(4, text.indexOf("\n---\n") + 1)).toJS();
 }
@@ -33,7 +35,7 @@ function keys(text: string): string[] {
 }
 
 export function expectHandStyleKept(after: string): void {
-  expect(keys(after)).toEqual(keys(HAND));
+  expect(keys(after)).toEqual([...keys(HAND), "select", "thread"]);
   expect(after).toContain("# added in Obsidian");
   expect(after).toContain("# the choices");
   expect(after).toContain("from: 'plan · s1'");

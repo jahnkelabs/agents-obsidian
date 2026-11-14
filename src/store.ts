@@ -3,10 +3,10 @@ import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, realpathSyn
 import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { type Answerer, type Item, parse, serialize, SLUG } from "./schema";
+import { type Answerer, type Item, type Message, parse, serialize, SLUG } from "./schema";
 
 export interface Answer {
-  answer: string;
+  answer: string | string[];
   note: string | null;
   answered_by: Answerer;
 }
@@ -76,6 +76,23 @@ export async function answerItem(path: string, answer: Answer): Promise<{ won: b
     const answered: Item = { ...item, ...answer, status: "answered", answered_at: new Date().toISOString() };
     writeAtomic(path, serialize(answered));
     return { won: true, item: answered };
+  } finally {
+    removeQuietly(lock);
+  }
+}
+
+export async function appendMessage(path: string, message: Message): Promise<{ appended: boolean; item: Item }> {
+  const lock = `${path}.lock`;
+  await acquireLock(lock);
+  try {
+    const item = readItem(path);
+    if (item.status === "answered") return { appended: false, item };
+
+    const last = item.thread.at(-1);
+    const at = last !== undefined && Date.parse(last.at) > Date.parse(message.at) ? last.at : message.at;
+    const appended: Item = { ...item, thread: [...item.thread, { ...message, at }] };
+    writeAtomic(path, serialize(appended));
+    return { appended: true, item: appended };
   } finally {
     removeQuietly(lock);
   }

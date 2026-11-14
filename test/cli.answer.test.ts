@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { parse } from "../src/schema";
 import { ask, inbox, inboxAsync, tempDocs } from "./cli";
-import { expectHandStyleKept, frontmatter, HAND } from "./hand";
+import { C5_DEFAULTS, expectHandStyleKept, frontmatter, HAND } from "./hand";
 
 const ANSWERERS = 20;
 
@@ -65,6 +65,41 @@ describe("inbox answer", () => {
     expect(JSON.parse(result.stdout)).toEqual({ answer: "yes", note: null, answered_by: "chat" });
   });
 
+  it("records a list of labels on a pick-many item", () => {
+    const docs = tempDocs();
+    const id = ask(docs, ["--select", "many", "--option", "lint", "--option", "typecheck", "--option", "e2e"]);
+
+    const result = inbox(docs, ["answer", id, "--option", "lint", "--option", "e2e", "--by", "inbox"]);
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ answer: ["lint", "e2e"], note: null, answered_by: "inbox" });
+    expect(parse(read(docs, id)).answer).toEqual(["lint", "e2e"]);
+  });
+
+  it("records a single label on a pick-many item as a list", () => {
+    const docs = tempDocs();
+    const id = ask(docs, ["--select", "many", "--option", "lint", "--option", "e2e"]);
+
+    expect(inbox(docs, ["answer", id, "--option", "e2e"]).status).toBe(0);
+    expect(parse(read(docs, id)).answer).toEqual(["e2e"]);
+  });
+
+  it.each([
+    ["two labels on a pick-one item", ["--option", "yes", "--option", "no"], ["--option", "yes", "--option", "no"]],
+    ["free text on a pick-many item", ["--select", "many", "--option", "yes", "--option", "no"], ["--text", "yes"]],
+    ["a repeated label on a pick-many item", ["--select", "many", "--option", "yes", "--option", "no"], ["--option", "yes", "--option", "yes"]],
+  ])("rejects %s, naming the answer, and writes nothing", (_, askArgs, answerArgs) => {
+    const docs = tempDocs();
+    const id = ask(docs, askArgs);
+    const before = read(docs, id);
+
+    const result = inbox(docs, ["answer", id, ...answerArgs]);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toMatch(/answer:/);
+    expect(read(docs, id)).toBe(before);
+  });
+
   it("exits 2 for a missing item", () => {
     const result = inbox(tempDocs(), ["answer", "2026-11-03t0530-s1-nothing", "--text", "go"]);
 
@@ -123,6 +158,7 @@ describe("inbox answer", () => {
     const after = read(docs, id);
     expect(frontmatter(after)).toEqual({
       ...frontmatter(HAND),
+      ...C5_DEFAULTS,
       status: "answered",
       answer: "ship",
       answered_by: "chat",

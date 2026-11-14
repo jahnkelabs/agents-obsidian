@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
-import { type Answerer, type Item, type Kind, SchemaError } from "../schema";
-import { answerItem, answerOf, createItem, docsDir, findItem, readItem } from "../store";
+import { type Answerer, type Item, type Kind, type Message, type Select, SchemaError } from "../schema";
+import { answerItem, answerOf, appendMessage, createItem, docsDir, findItem, readItem } from "../store";
 
 const EXIT_ERROR = 2;
 const EXIT_LOST = 3;
@@ -11,12 +11,13 @@ const POLL_MS = 1000;
 const MAX_BAD_READS = 3;
 
 const USAGE = `usage:
-  inbox ask --kind <kind> --from "<skill> · <session>" [--map <slug> [--concern <slug>]]
-            [--option <label> ...] [--recommended <label>]   < body
+  inbox ask --kind <kind> --from "<skill> · <session>" [--select one|many] [--map <slug> [--concern <slug>]]
+            [--option <label> ...] [--recommended <label> ...]   < body
   inbox wait <id> [--timeout <seconds>]
-  inbox answer <id> (--option <label> | --text <answer>) [--note <text>] [--by inbox|chat]`;
+  inbox reply <id>   < message
+  inbox answer <id> (--option <label> ... | --text <answer>) [--note <text>] [--by inbox|chat]`;
 
-const commands: Record<string, (args: string[]) => Promise<number>> = { ask, wait, answer };
+const commands: Record<string, (args: string[]) => Promise<number>> = { ask, wait, reply, answer };
 
 const [command = "", ...args] = process.argv.slice(2);
 try {
@@ -36,10 +37,12 @@ async function ask(args: string[]): Promise<number> {
       map: { type: "string" },
       concern: { type: "string" },
       from: { type: "string" },
+      select: { type: "string", default: "one" },
       option: { type: "string", multiple: true },
-      recommended: { type: "string" },
+      recommended: { type: "string", multiple: true },
     },
   });
+  const select = values.select as Select;
 
   const item: Item = {
     type: "inbox",
@@ -48,8 +51,10 @@ async function ask(args: string[]): Promise<number> {
     concern: values.concern ?? null,
     from: values.from as string,
     status: "awaiting-you",
+    select,
     options: values.option ?? [],
-    recommended: values.recommended ?? null,
+    recommended: values.recommended === undefined ? null : labels(select, values.recommended),
+    thread: [],
     answer: null,
     note: null,
     answered_by: null,
@@ -80,7 +85,12 @@ async function wait(args: string[]): Promise<number> {
       const item = readItem(path);
       badReads = 0;
       if (item.status === "answered") {
-        console.log(JSON.stringify(answerOf(item)));
+        console.log(JSON.stringify({ event: "answer", ...answerOf(item) }));
+        return 0;
+      }
+      const messages = unanswered(item.thread);
+      if (messages.length > 0) {
+        console.log(JSON.stringify({ event: "message", messages }));
         return 0;
       }
     } catch (error) {
@@ -99,12 +109,29 @@ async function wait(args: string[]): Promise<number> {
   }
 }
 
+async function reply(args: string[]): Promise<number> {
+  const { positionals } = parseArgs({ args, allowPositionals: true, options: {} });
+  const path = locate(positionals);
+
+  const { appended, item } = await appendMessage(path, {
+    author: "agent",
+    at: new Date().toISOString(),
+    text: readFileSync(0, "utf8"),
+  });
+  if (!appended) {
+    console.log(JSON.stringify(answerOf(item)));
+    return EXIT_LOST;
+  }
+  console.log(JSON.stringify({ messages: item.thread.length }));
+  return 0;
+}
+
 async function answer(args: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args,
     allowPositionals: true,
     options: {
-      option: { type: "string" },
+      option: { type: "string", multiple: true },
       text: { type: "string" },
       note: { type: "string" },
       by: { type: "string", default: "chat" },
@@ -116,12 +143,21 @@ async function answer(args: string[]): Promise<number> {
   const path = locate(positionals);
 
   const { won, item } = await answerItem(path, {
-    answer: (values.option ?? values.text)!,
+    answer: values.option === undefined ? values.text! : labels(readItem(path).select, values.option),
     note: values.note ?? null,
     answered_by: values.by as Answerer,
   });
   console.log(JSON.stringify(answerOf(item)));
   return won ? 0 : EXIT_LOST;
+}
+
+function labels(select: Select, given: string[]): string | string[] {
+  return select === "one" && given.length === 1 ? given[0] : given;
+}
+
+function unanswered(thread: Message[]): Message[] {
+  const lastReply = thread.map((message) => message.author).lastIndexOf("agent");
+  return thread.slice(lastReply + 1);
 }
 
 function locate(positionals: string[]): string {
