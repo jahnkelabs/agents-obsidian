@@ -60,7 +60,7 @@ export function readText(docs: string, id: string): string {
 }
 
 export function post(docs: string, id: string, text: string): ReturnType<typeof appendMessage> {
-  return appendMessage(itemPath(docs, id), { author: "you", at: new Date().toISOString(), text });
+  return appendMessage(itemPath(docs, id), { author: "you", text });
 }
 
 export function ask(docs: string, args: string[] = [], body = "**Deciding — Pick a library**\n\nfound: two\n"): string {

@@ -113,11 +113,7 @@ async function reply(args: string[]): Promise<number> {
   const { positionals } = parseArgs({ args, allowPositionals: true, options: {} });
   const path = locate(positionals);
 
-  const { appended, item } = await appendMessage(path, {
-    author: "agent",
-    at: new Date().toISOString(),
-    text: readFileSync(0, "utf8"),
-  });
+  const { appended, item } = await appendMessage(path, { author: "agent", text: readFileSync(0, "utf8") });
   if (!appended) {
     console.log(JSON.stringify(answerOf(item)));
     return EXIT_LOST;

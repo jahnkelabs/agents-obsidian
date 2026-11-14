@@ -307,15 +307,16 @@ export class InboxItemView extends ItemView {
       text: `Your answer · ${open ? "open question" : many ? "pick any" : "pick one"}`,
     });
     const choices = el.createDiv({ cls: "agents-inbox-choices" });
-    choices.toggleClass("mod-many", many);
     const inputs = item.options.map((option) => {
       const label = choices.createEl("label", { cls: "agents-inbox-choice" });
       label.dataset.option = option;
-      const input = label.createEl("input", { type: many ? "checkbox" : "radio", attr: { name: `agents-inbox-${this.path}`, value: option } });
-      label.createSpan({ cls: "agents-inbox-choice-label", text: option });
+      const control = label.createSpan({ cls: "agents-inbox-choice-control" });
+      const input = control.createEl("input", { type: many ? "checkbox" : "radio", attr: { name: `agents-inbox-${this.path}`, value: option } });
+      const text = label.createSpan({ cls: "agents-inbox-choice-text" });
+      text.createSpan({ cls: "agents-inbox-choice-label", text: option });
       if (recommended.includes(option)) {
         label.addClass("is-recommended");
-        label.createSpan({ cls: "agents-inbox-recommended", text: "recommended" });
+        text.createSpan({ cls: "agents-inbox-recommended", text: "recommended" });
       }
       return input;
     });
@@ -373,7 +374,7 @@ export class InboxItemView extends ItemView {
     if (this.busy || text.trim() === "" || this.item?.status !== "awaiting-you") return;
     this.setBusy(true);
     try {
-      const { appended } = await appendMessage(this.absolute(), { author: "you", at: new Date().toISOString(), text });
+      const { appended } = await appendMessage(this.absolute(), { author: "you", text });
       if (appended) this.composer.value = "";
     } catch (error) {
       new Notice(`Inbox: ${(error as Error).message}`);

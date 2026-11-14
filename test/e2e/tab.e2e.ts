@@ -20,7 +20,6 @@ import {
   reset,
   row,
   rowIds,
-  seenDiagnostics,
   seenPaths,
   tab,
   tabKept,
@@ -57,10 +56,9 @@ describe("the sidebar list and the item tab", () => {
     await openItem(id);
     await unreadMark(id).waitForExist({ reverse: true });
     expect(readBytes(rel).equals(replied)).toBe(true);
-    const recorded = await browser.waitUntil(async () => (await seenPaths()).includes(rel)).catch(() => false);
-    if (!recorded) {
-      throw new Error(`the plugin's saved data never recorded ${rel} as seen: ${JSON.stringify(await seenDiagnostics(rel))}`);
-    }
+    await browser.waitUntil(async () => (await seenPaths()).includes(rel), {
+      timeoutMsg: `the plugin's saved data never recorded ${rel} as seen`,
+    });
 
     reply(id, "Another reply\n");
     await expect(tab(id).$$(".agents-inbox-message")).toBeElementsArrayOfSize(2);

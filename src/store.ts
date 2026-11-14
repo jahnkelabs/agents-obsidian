@@ -81,7 +81,10 @@ export async function answerItem(path: string, answer: Answer): Promise<{ won: b
   }
 }
 
-export async function appendMessage(path: string, message: Message): Promise<{ appended: boolean; item: Item }> {
+export async function appendMessage(
+  path: string,
+  message: Omit<Message, "at">,
+): Promise<{ appended: boolean; item: Item }> {
   const lock = `${path}.lock`;
   await acquireLock(lock);
   try {
@@ -89,8 +92,9 @@ export async function appendMessage(path: string, message: Message): Promise<{ a
     if (item.status === "answered") return { appended: false, item };
 
     const last = item.thread.at(-1);
-    const at = last !== undefined && Date.parse(last.at) > Date.parse(message.at) ? last.at : message.at;
-    const appended: Item = { ...item, thread: [...item.thread, { ...message, at }] };
+    const now = Date.now();
+    const at = last !== undefined && Date.parse(last.at) > now ? last.at : new Date(now).toISOString();
+    const appended: Item = { ...item, thread: [...item.thread, { author: message.author, text: message.text, at }] };
     writeAtomic(path, serialize(appended));
     return { appended: true, item: appended };
   } finally {

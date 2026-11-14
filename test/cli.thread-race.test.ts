@@ -15,10 +15,17 @@ describe("concurrent thread writes", () => {
     const replies = Array.from({ length: REPLIERS }, (_, n) => inboxAsync(docs, ["reply", id], `reply ${n}\n`));
     const answers = labels.map((label) => inboxAsync(docs, ["answer", id, "--option", label]));
     const posts = Array.from({ length: POSTERS }, (_, n) => post(docs, id, `post ${n}\n`));
-    const [replyResults, answerResults, postResults] = await Promise.all([
+
+    await Promise.any(answers.map((a) => a.then((r) => (r.status === 0 ? r : Promise.reject(r)))));
+    const lateReplies = Array.from({ length: REPLIERS }, (_, n) => inboxAsync(docs, ["reply", id], `late reply ${n}\n`));
+    const latePosts = Array.from({ length: POSTERS }, (_, n) => post(docs, id, `late post ${n}\n`));
+
+    const [replyResults, answerResults, postResults, lateReplyResults, latePostResults] = await Promise.all([
       Promise.all(replies),
       Promise.all(answers),
       Promise.all(posts),
+      Promise.all(lateReplies),
+      Promise.all(latePosts),
     ]);
 
     const winners = answerResults.filter((r) => r.status === 0);
@@ -37,6 +44,10 @@ describe("concurrent thread writes", () => {
     for (const message of item.thread) expect(Date.parse(message.at)).toBeLessThanOrEqual(Date.parse(item.answered_at!));
     for (const r of replyResults.filter((r) => r.status === 3)) expect(JSON.parse(r.stdout)).toEqual(winning);
     for (const r of postResults.filter((r) => !r.appended)) expect(r.item.answer).toEqual(winning.answer);
+
+    expect(lateReplyResults.map((r) => r.status)).toEqual(Array(REPLIERS).fill(3));
+    expect(latePostResults.map((r) => r.appended)).toEqual(Array(POSTERS).fill(false));
+    expect(item.thread.filter((m) => m.text.startsWith("late "))).toEqual([]);
   });
 
   it("keeps every message of parallel replies and posts on an open item, in order", async () => {

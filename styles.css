@@ -34,8 +34,9 @@
   margin: 0;
   padding: var(--size-2-3) var(--size-4-2);
   color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
+  font-size: var(--nav-item-size);
   font-weight: var(--font-semibold);
+  line-height: var(--line-height-tight);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -44,9 +45,12 @@
   display: flex;
   flex-direction: column;
   gap: var(--size-2-1);
-  padding: var(--size-4-2);
-  border-radius: var(--radius-m);
+  padding: var(--nav-item-padding);
+  border-radius: var(--radius-s);
   color: var(--nav-item-color);
+  font-size: var(--nav-item-size);
+  font-weight: var(--nav-item-weight);
+  line-height: var(--line-height-tight);
   cursor: pointer;
 }
 
@@ -54,11 +58,13 @@
 .agents-inbox-row:focus-visible {
   background-color: var(--nav-item-background-hover);
   color: var(--nav-item-color-hover);
+  font-weight: var(--nav-item-weight-hover);
 }
 
 .agents-inbox-row.is-selected {
   background-color: var(--nav-item-background-active);
   color: var(--nav-item-color-active);
+  font-weight: var(--nav-item-weight-active);
 }
 
 .agents-inbox-row-head {
@@ -350,14 +356,14 @@
 
 .agents-inbox-answer-label {
   color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
+  font-size: var(--font-ui-small);
   font-weight: var(--font-semibold);
   letter-spacing: 0.02em;
 }
 
 .agents-inbox-choices {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: var(--size-4-2);
 }
 
@@ -365,14 +371,11 @@
   display: none;
 }
 
-.agents-inbox-choices.mod-many {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
 .agents-inbox-choice {
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
+  align-content: center;
+  align-items: flex-start;
   gap: var(--size-4-2);
   box-sizing: border-box;
   min-height: 44px;
@@ -380,7 +383,21 @@
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--radius-m);
   background-color: var(--background-primary);
+  font-size: var(--font-ui-small);
+  line-height: var(--line-height-normal);
   cursor: pointer;
+}
+
+.agents-inbox-choice-control {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 1lh;
+}
+
+.agents-inbox-choice-text {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .agents-inbox-choice:hover {
@@ -403,21 +420,20 @@
 }
 
 .agents-inbox-choice-label {
-  min-width: 0;
   overflow-wrap: anywhere;
 }
 
 .agents-inbox-recommended {
-  flex: none;
+  display: inline-block;
+  margin-left: var(--size-4-2);
   padding: 0 var(--size-2-3);
   border: 1px solid color-mix(in srgb, var(--interactive-accent) 50%, transparent);
   border-radius: var(--radius-l);
   color: var(--text-accent);
   font-size: var(--font-ui-smaller);
-}
-
-.agents-inbox-choices.mod-many .agents-inbox-recommended {
-  margin-left: auto;
+  line-height: var(--line-height-tight);
+  vertical-align: baseline;
+  white-space: nowrap;
 }
 
 .agents-inbox-answer-row {
@@ -432,11 +448,13 @@
   min-height: var(--input-height);
   max-height: 30vh;
   field-sizing: content;
+  font-size: var(--font-ui-small);
   resize: none;
 }
 
 .agents-inbox-answer {
   flex: none;
+  font-size: var(--font-ui-small);
 }
 
 .agents-inbox-compose {

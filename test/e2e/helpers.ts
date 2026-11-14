@@ -254,34 +254,6 @@ export async function seenPaths(): Promise<string[]> {
   return await browser.executeObsidian(async ({ plugins }) => Object.keys(((await plugins.agents.loadData()) ?? {}).seen ?? {}));
 }
 
-export async function seenDiagnostics(rel: string): Promise<Record<string, unknown>> {
-  return await browser.executeObsidian(async ({ app, plugins }, path) => {
-    const { adapter } = app.vault;
-    const plugin = plugins.agents as unknown as { manifest: { dir: string }; seenAt: (p: string) => number | undefined };
-    const dir = plugin.manifest.dir;
-    const attempt = async (run: () => Promise<unknown>) => {
-      try {
-        return await run();
-      } catch (error) {
-        return `error ${(error as NodeJS.ErrnoException).code ?? (error as Error).message}`;
-      }
-    };
-    return {
-      basePath: (adapter as unknown as { getBasePath: () => string }).getBasePath(),
-      dir,
-      dirExists: await adapter.exists(dir),
-      inMemory: plugin.seenAt(path) ?? null,
-      loadData: (await plugins.agents.loadData()) ?? null,
-      onDisk: await attempt(() => adapter.read(`${dir}/data.json`)),
-      probeWrite: await attempt(async () => {
-        await adapter.write(`${dir}/probe.tmp`, "x");
-        await adapter.remove(`${dir}/probe.tmp`);
-        return "ok";
-      }),
-    };
-  }, rel);
-}
-
 export function rowIds(): Promise<string[]> {
   return browser.execute(
     (sidebar) => [...document.querySelectorAll<HTMLElement>(`${sidebar} .agents-inbox-row[data-id]`)].map((el) => el.dataset.id ?? ""),
