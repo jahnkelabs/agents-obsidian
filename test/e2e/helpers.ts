@@ -333,6 +333,13 @@ export function authorsOf(id: string): Promise<string[]> {
   );
 }
 
+export const ANSWERING_CONTROLS =
+  "button.agents-inbox-send, button.agents-inbox-answer, .agents-inbox-choice input, textarea.agents-inbox-note, textarea.agents-inbox-composer:not([readonly])";
+
+export async function expectNoAnsweringControls(el: ReturnType<typeof $>): Promise<void> {
+  await expect(el.$$(ANSWERING_CONTROLS)).toBeElementsArrayOfSize(0);
+}
+
 export async function expectNoControls(el: ReturnType<typeof $>): Promise<void> {
   await expect(el.$$("button, input, textarea, select")).toBeElementsArrayOfSize(0);
 }

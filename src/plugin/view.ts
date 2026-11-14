@@ -1,5 +1,6 @@
-import { ItemView, type WorkspaceLeaf } from "obsidian";
+import { ItemView, setIcon, type WorkspaceLeaf } from "obsidian";
 import { age, type Broken, type Entry, type Group, groupKey, listAwaiting, title, unread } from "./inbox";
+import { ITEM_VIEW_TYPE } from "./item-view";
 import type AgentsPlugin from "./main";
 
 export const VIEW_TYPE = "agents-inbox";
@@ -23,7 +24,7 @@ export class InboxView extends ItemView {
   private rows = new Map<string, Row>();
   private sections = new Map<string, Section>();
   private brokenRows = new Map<string, HTMLElement>();
-  private readonly empty = createDiv({ cls: "agents-inbox-empty", text: "Nothing waits on you." });
+  private readonly empty = createDiv({ cls: "agents-inbox-empty" });
   private timer: number | null = null;
 
   constructor(
@@ -31,6 +32,9 @@ export class InboxView extends ItemView {
     private readonly plugin: AgentsPlugin,
   ) {
     super(leaf);
+    setIcon(this.empty.createDiv({ cls: "agents-inbox-empty-icon" }), "check");
+    this.empty.createDiv({ cls: "agents-inbox-empty-title", text: "Nothing waits on you" });
+    this.empty.createDiv({ cls: "agents-inbox-empty-hint", text: "Agents' questions appear here." });
   }
 
   getViewType(): string {
@@ -48,6 +52,8 @@ export class InboxView extends ItemView {
   async onOpen(): Promise<void> {
     this.contentEl.addClass("agents-inbox");
     this.registerInterval(window.setInterval(() => this.updateAges(), AGE_INTERVAL_MS));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.select()));
+    this.registerEvent(this.app.workspace.on("layout-change", () => this.select()));
     this.render();
   }
 
@@ -80,6 +86,14 @@ export class InboxView extends ItemView {
 
     const isEmpty = groups.length === 0 && broken.length === 0;
     place(this.contentEl, [...this.placeBroken(broken), ...this.placeGroups(groups), ...(isEmpty ? [this.empty] : [])]);
+    this.select();
+  }
+
+  private select(): void {
+    const leaf = this.app.workspace.getMostRecentLeaf(this.app.workspace.rootSplit);
+    const state = leaf?.view.getViewType() === ITEM_VIEW_TYPE ? leaf.getViewState().state : undefined;
+    const path = typeof state?.path === "string" ? state.path : null;
+    for (const row of this.rows.values()) row.el.toggleClass("is-selected", row.el.dataset.path === path);
   }
 
   private updateAges(): void {
@@ -93,10 +107,17 @@ export class InboxView extends ItemView {
     el.dataset.path = path;
     el.tabIndex = 0;
     el.toggleClass("is-unread", isUnread);
-    if (isUnread) el.createSpan({ cls: "agents-inbox-unread", attr: { "aria-label": "Unread reply" } });
-    el.createSpan({ cls: "agents-inbox-row-title", text: title(entry.item) });
-    el.createSpan({ cls: "agents-inbox-row-kind", text: entry.item.kind });
-    const ageEl = el.createSpan({ cls: "agents-inbox-row-age" });
+    const head = el.createDiv({ cls: "agents-inbox-row-head" });
+    if (isUnread) head.createSpan({ cls: "agents-inbox-unread", attr: { "aria-label": "Unread reply" } });
+    head.createSpan({ cls: "agents-inbox-row-title", text: title(entry.item) });
+    const meta = el.createDiv({ cls: "agents-inbox-row-meta" });
+    meta.createSpan({ cls: `agents-inbox-row-kind agents-inbox-kind-${entry.item.kind}`, text: entry.item.kind });
+    meta.createSpan({ cls: "agents-inbox-sep", text: "·", attr: { "aria-hidden": "true" } });
+    const ageEl = meta.createSpan({ cls: "agents-inbox-row-age" });
+    if (isUnread) {
+      meta.createSpan({ cls: "agents-inbox-sep", text: "·", attr: { "aria-hidden": "true" } });
+      meta.createSpan({ cls: "agents-inbox-row-new", text: "new reply" });
+    }
     el.onclick = () => void this.plugin.openItem(path);
     el.onkeydown = (event) => {
       if (event.key === "Enter") void this.plugin.openItem(path);
@@ -117,6 +138,9 @@ export class InboxView extends ItemView {
   private brokenRow(path: string, error: string): HTMLElement {
     const row = createDiv({ cls: "agents-inbox-row agents-inbox-broken" });
     row.dataset.path = this.plugin.vaultPath(path);
+    const head = row.createDiv({ cls: "agents-inbox-broken-head" });
+    setIcon(head.createSpan({ cls: "agents-inbox-broken-icon" }), "alert-circle");
+    head.createSpan({ text: "Can't read this item" });
     row.createDiv({ cls: "agents-inbox-broken-path", text: this.plugin.vaultPath(path) });
     row.createDiv({ cls: "agents-inbox-broken-error", text: error });
     return row;

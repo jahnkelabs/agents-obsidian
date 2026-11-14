@@ -4,7 +4,7 @@ import {
   answerUnderLock,
   chatAnswersThenTabClicks,
   choose,
-  expectNoControls,
+  expectNoAnsweringControls,
   holdLock,
   itemAt,
   M1_ANSWERED,
@@ -48,7 +48,7 @@ describe("a tab whose answer chat already won", () => {
     await waitForObsidianToSee(M1_NEWER, "chat");
     await browser.pause(250);
     await expect(result).toHaveText(WINNER);
-    await expectNoControls(tab("m1-newer"));
+    await expectNoAnsweringControls(tab("m1-newer"));
     expect(readBytes(M1_NEWER).equals(written)).toBe(true);
     expect(itemAt(M1_NEWER).answer).toBe("beta");
     expect(itemAt(M1_NEWER).answered_by).toBe("chat");
@@ -67,7 +67,7 @@ describe("a tab whose answer chat already won", () => {
     await waitForObsidianToSee(M1_NEWER, "chat");
     await browser.pause(250);
     await expect(result).toHaveText(WINNER);
-    await expectNoControls(tab("m1-newer"));
+    await expectNoAnsweringControls(tab("m1-newer"));
     expect(readBytes(M1_NEWER).toString("utf8")).toBe(text);
     expect(itemAt(M1_NEWER).answered_by).toBe("chat");
   });

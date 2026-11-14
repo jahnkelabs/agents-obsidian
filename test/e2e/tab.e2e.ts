@@ -5,6 +5,7 @@ import {
   answerButton,
   ask,
   authorsOf,
+  expectNoAnsweringControls,
   expectNoControls,
   inbox,
   itemTabs,
@@ -89,7 +90,7 @@ describe("the sidebar list and the item tab", () => {
     const result = inbox(["answer", "m1-newer", "--option", "beta", "--by", "chat"]);
     expect(result.status).toBe(0);
     await expect(tab("m1-newer").$(".agents-inbox-result")).toHaveText("Answered by chat: beta");
-    await expectNoControls(tab("m1-newer"));
+    await expectNoAnsweringControls(tab("m1-newer"));
     expect(await authorsOf("m1-newer")).toEqual(["agent"]);
     expect(await tabKept("m1-newer")).toBe(true);
   });

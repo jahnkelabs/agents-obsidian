@@ -5,6 +5,7 @@ import {
   bodyBytes,
   chatAnswersThenTabClicks,
   composer,
+  expectNoAnsweringControls,
   inbox,
   itemAt,
   M1_EARLIER,
@@ -92,7 +93,8 @@ describe("an item's thread", () => {
     await expect(tab("m1-newer").$(".agents-inbox-result")).toHaveText("Answered by chat: beta");
     await expect(composer("m1-newer")).toHaveValue("one more question");
     expect(await composer("m1-newer").getProperty("readOnly")).toBe(true);
-    await expect(tab("m1-newer").$$("button, input")).toBeElementsArrayOfSize(0);
+    await expectNoAnsweringControls(tab("m1-newer"));
+    await expect(tab("m1-newer").$("button.agents-inbox-copy-draft")).toBeDisplayed();
     expect(readBytes(M1_NEWER).toString("utf8")).toBe(text);
     expect(itemAt(M1_NEWER).thread).toEqual([]);
   });

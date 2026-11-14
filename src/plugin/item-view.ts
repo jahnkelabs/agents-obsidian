@@ -1,8 +1,19 @@
 import { basename, join } from "node:path";
-import { Component, ItemView, MarkdownRenderer, Notice, Scope, type ViewStateResult, type WorkspaceLeaf } from "obsidian";
+import {
+  Component,
+  ItemView,
+  MarkdownRenderer,
+  Notice,
+  Platform,
+  Scope,
+  setIcon,
+  setTooltip,
+  type ViewStateResult,
+  type WorkspaceLeaf,
+} from "obsidian";
 import type { Item, Message } from "../schema";
 import { answerItem, appendMessage, readItem } from "../store";
-import { answerText, title } from "./inbox";
+import { age, answerText, title } from "./inbox";
 import type AgentsPlugin from "./main";
 import { place } from "./view";
 
@@ -24,6 +35,11 @@ interface AnswerSection {
   sync: () => void;
 }
 
+function ago(at: string): string {
+  const span = age(at, Date.now());
+  return span === "now" ? "just now" : `${span} ago`;
+}
+
 export class InboxItemView extends ItemView {
   path = "";
   private item: Item | null = null;
@@ -32,18 +48,27 @@ export class InboxItemView extends ItemView {
   private scheduled: Promise<void> | null = null;
   private queue: Promise<void> = Promise.resolve();
 
+  private readonly mainEl = createDiv({ cls: "agents-inbox-item-main" });
+  private readonly dockEl = createDiv({ cls: "agents-inbox-dock" });
   private readonly metaEl = createDiv({ cls: "agents-inbox-item-meta" });
-  private readonly bodyEl = createDiv({ cls: "agents-inbox-body" });
+  private readonly bodyEl = createDiv({ cls: "agents-inbox-body markdown-rendered" });
   private body: Rendered | null = null;
   private readonly threadEl = createDiv({ cls: "agents-inbox-thread" });
   private messages: Rendered[] = [];
+  private readonly waitingEl = createDiv({ cls: "agents-inbox-waiting" });
   private readonly statusEl = createDiv({ cls: "agents-inbox-status" });
+  private readonly notSentEl = createDiv({ cls: "agents-inbox-not-sent" });
   private readonly composeEl = createDiv({ cls: "agents-inbox-compose" });
   private readonly composer = this.composeEl.createEl("textarea", {
     cls: "agents-inbox-composer",
-    attr: { placeholder: "Ask the agent. Cmd/Ctrl+Enter sends." },
+    attr: { placeholder: "Ask the agent a question…", rows: "2", "aria-label": "Message the agent" },
   });
-  private readonly send = this.composeEl.createEl("button", { cls: "agents-inbox-send", text: "Send" });
+  private readonly hint = this.composeEl.createSpan({
+    cls: "agents-inbox-compose-hint",
+    text: Platform.isMacOS ? "⌘↵ to send" : "Ctrl+↵ to send",
+  });
+  private readonly send = this.composeEl.createEl("button", { cls: "agents-inbox-send", attr: { "aria-label": "Send" } });
+  private readonly copyDraft = createEl("button", { cls: "agents-inbox-copy-draft", text: "Copy draft" });
   private answerSection: AnswerSection | null = null;
 
   constructor(
@@ -51,8 +76,14 @@ export class InboxItemView extends ItemView {
     private readonly plugin: AgentsPlugin,
   ) {
     super(leaf);
+    setIcon(this.send, "arrow-up");
+    setIcon(this.waitingEl.createSpan({ cls: "agents-inbox-waiting-icon" }), "clock");
+    this.waitingEl.createSpan({ text: "Waiting for the agent to reply" });
+    setIcon(this.notSentEl.createSpan({ cls: "agents-inbox-not-sent-icon" }), "alert-circle");
+    this.notSentEl.createSpan({ text: "Not sent: the item was answered while you typed. Copy your draft if you need it." });
     this.composer.oninput = () => this.sync();
     this.send.onclick = () => void this.sendMessage();
+    this.copyDraft.onclick = () => void this.copy();
     this.scope = new Scope(this.app.scope);
     for (const modifier of ["Mod", "Ctrl"] as const) {
       this.scope.register([modifier], "Enter", (event) => {
@@ -144,7 +175,8 @@ export class InboxItemView extends ItemView {
       this.statusEl.empty();
       if (loaded.kind === "missing") this.statusEl.createDiv({ cls: "agents-inbox-missing", text: "This item no longer exists" });
       else this.statusEl.createDiv({ cls: "agents-inbox-broken-error", text: loaded.error });
-      place(this.contentEl, [this.statusEl]);
+      place(this.mainEl, [this.statusEl]);
+      place(this.contentEl, [this.mainEl]);
       return;
     }
 
@@ -152,7 +184,7 @@ export class InboxItemView extends ItemView {
     this.item = item;
     const awaiting = item.status === "awaiting-you";
     this.contentEl.dataset.status = item.status;
-    this.metaEl.setText(`${item.kind} · ${item.from}`);
+    this.renderMeta(item);
 
     if (awaiting) {
       this.statusEl.empty();
@@ -162,27 +194,54 @@ export class InboxItemView extends ItemView {
       this.showAnswered(item);
       this.answerSection = null;
     }
-    const keepComposer = awaiting || this.composer.value.trim() !== "";
-    place(this.composeEl, awaiting ? [this.composer, this.send] : [this.composer]);
-    place(this.contentEl, [
+    const draft = this.composer.value.trim() !== "";
+    const last = item.thread[item.thread.length - 1];
+    const waiting = awaiting && last?.author === "you";
+    this.composeEl.toggleClass("is-draft", !awaiting);
+    place(this.composeEl, awaiting ? [this.composer, this.hint, this.send] : [this.composer, this.copyDraft]);
+    place(this.mainEl, [
       this.metaEl,
       this.bodyEl,
       this.threadEl,
-      ...(keepComposer ? [this.composeEl] : []),
+      ...(waiting ? [this.waitingEl] : []),
       ...(awaiting ? [] : [this.statusEl]),
-      ...(this.answerSection ? [this.answerSection.el] : []),
     ]);
+    const docked = awaiting
+      ? [...(this.answerSection ? [this.answerSection.el] : []), this.composeEl]
+      : draft
+        ? [this.notSentEl, this.composeEl]
+        : [];
+    place(this.dockEl, docked);
+    place(this.contentEl, [this.mainEl, ...(docked.length > 0 ? [this.dockEl] : [])]);
     this.sync();
 
-    await this.renderBody(item.body);
+    await this.renderBody(item);
     await this.renderThread(item.thread);
     this.see();
   }
 
+  private renderMeta(item: Item): void {
+    this.metaEl.empty();
+    this.metaEl.createSpan({ cls: `agents-inbox-kind agents-inbox-kind-${item.kind}`, text: item.kind });
+    const where = item.map === null ? null : item.concern === null ? item.map : `${item.map} / ${item.concern}`;
+    for (const part of [where, item.from, ago(item.created_at)]) {
+      if (part === null) continue;
+      this.metaEl.createSpan({ cls: "agents-inbox-sep", text: "·", attr: { "aria-hidden": "true" } });
+      this.metaEl.createSpan({ text: part });
+    }
+  }
+
   private showAnswered(item: Item): void {
     this.statusEl.empty();
-    this.statusEl.createDiv({ cls: "agents-inbox-result", text: `Answered by ${item.answered_by}: ${answerText(item)}` });
-    if (item.note !== null) this.statusEl.createDiv({ cls: "agents-inbox-result-note", text: `Note: ${item.note}` });
+    const card = this.statusEl.createDiv({ cls: "agents-inbox-answered" });
+    const head = card.createDiv({ cls: "agents-inbox-answered-head" });
+    setIcon(head.createSpan({ cls: "agents-inbox-answered-icon" }), "check");
+    head.createSpan({ cls: "agents-inbox-result", text: `Answered by ${item.answered_by}: ${answerText(item)}` });
+    if (item.answered_at !== null) {
+      head.createSpan({ cls: "agents-inbox-sep", text: "·", attr: { "aria-hidden": "true" } });
+      head.createSpan({ cls: "agents-inbox-answered-age", text: ago(item.answered_at) });
+    }
+    if (item.note !== null) card.createDiv({ cls: "agents-inbox-result-note", text: `Note: ${item.note}` });
   }
 
   private clear(): void {
@@ -195,13 +254,15 @@ export class InboxItemView extends ItemView {
     this.answerSection = null;
   }
 
-  private async renderBody(body: string): Promise<void> {
-    if (this.body?.key === body) return;
+  private async renderBody(item: Item): Promise<void> {
+    if (this.body?.key === item.body) return;
     if (this.body) this.removeChild(this.body.component);
     this.bodyEl.empty();
     const component = this.addChild(new Component());
-    this.body = { key: body, el: this.bodyEl, component };
-    await MarkdownRenderer.render(this.app, body, this.bodyEl, this.path, component);
+    this.body = { key: item.body, el: this.bodyEl, component };
+    await MarkdownRenderer.render(this.app, item.body, this.bodyEl, this.path, component);
+    const first = this.bodyEl.firstElementChild;
+    if (first instanceof HTMLElement && first.textContent?.trim() === title(item)) first.addClass("agents-inbox-item-title");
   }
 
   private async renderThread(thread: Message[]): Promise<void> {
@@ -220,10 +281,16 @@ export class InboxItemView extends ItemView {
   private async renderMessage(message: Message, key: string): Promise<Rendered> {
     const el = this.threadEl.createDiv({ cls: "agents-inbox-message" });
     el.dataset.author = message.author;
-    const meta = el.createDiv({ cls: "agents-inbox-message-meta" });
-    meta.createSpan({ cls: "agents-inbox-message-author", text: message.author === "you" ? "You" : "Agent" });
-    meta.createSpan({ cls: "agents-inbox-message-time", text: new Date(message.at).toLocaleString() });
-    const text = el.createDiv({ cls: "agents-inbox-message-text" });
+    const at = new Date(message.at).toLocaleString();
+    if (message.author === "agent") {
+      const label = el.createDiv({ cls: "agents-inbox-message-author" });
+      label.createSpan({ cls: "agents-inbox-message-dot" });
+      label.createSpan({ text: "agent" });
+      setTooltip(label, at);
+    } else {
+      setTooltip(el, at, { placement: "left" });
+    }
+    const text = el.createDiv({ cls: "agents-inbox-message-text markdown-rendered" });
     const component = this.addChild(new Component());
     await MarkdownRenderer.render(this.app, message.text, text, this.path, component);
     return { key, el, component };
@@ -235,7 +302,12 @@ export class InboxItemView extends ItemView {
     const many = item.select === "many";
     const recommended = item.recommended === null ? [] : [item.recommended].flat();
 
+    el.createDiv({
+      cls: "agents-inbox-answer-label",
+      text: `Your answer · ${open ? "open question" : many ? "pick any" : "pick one"}`,
+    });
     const choices = el.createDiv({ cls: "agents-inbox-choices" });
+    choices.toggleClass("mod-many", many);
     const inputs = item.options.map((option) => {
       const label = choices.createEl("label", { cls: "agents-inbox-choice" });
       label.dataset.option = option;
@@ -247,8 +319,12 @@ export class InboxItemView extends ItemView {
       }
       return input;
     });
-    const note = el.createEl("textarea", { cls: "agents-inbox-note", attr: { placeholder: open ? "Answer" : "Note" } });
-    const submit = el.createEl("button", { cls: "agents-inbox-answer mod-cta", text: "Answer" });
+    const row = el.createDiv({ cls: "agents-inbox-answer-row" });
+    const note = row.createEl("textarea", {
+      cls: "agents-inbox-note",
+      attr: { rows: "1", placeholder: open ? "Your answer" : "Add a note (optional)", "aria-label": open ? "Answer" : "Note" },
+    });
+    const submit = row.createEl("button", { cls: "agents-inbox-answer mod-cta", text: "Answer" });
 
     const chosen = (): string | string[] | null => {
       if (open) return note.value.trim() || null;
@@ -281,6 +357,15 @@ export class InboxItemView extends ItemView {
   private setBusy(busy: boolean): void {
     this.busy = busy;
     this.sync();
+  }
+
+  private async copy(): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(this.composer.value);
+      new Notice("Draft copied");
+    } catch (error) {
+      new Notice(`Inbox: ${(error as Error).message}`);
+    }
   }
 
   private async sendMessage(): Promise<void> {
