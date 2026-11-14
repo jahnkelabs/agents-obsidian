@@ -1,4 +1,4 @@
-import { FileSystemAdapter, Notice, Plugin, type TAbstractFile } from "obsidian";
+import { FileSystemAdapter, Notice, Plugin, type TAbstractFile, type WorkspaceLeaf } from "obsidian";
 import { isInboxPath } from "./inbox";
 import { InboxView, VIEW_TYPE } from "./view";
 
@@ -15,28 +15,33 @@ export default class AgentsPlugin extends Plugin {
     this.addRibbonIcon("inbox", "Open inbox", () => void this.open());
     this.addCommand({ id: "open-inbox", name: "Open inbox", callback: () => void this.open() });
 
-    const onChange = (file: TAbstractFile) => isInboxPath(file.path) && this.refresh();
+    const onChange = (file: TAbstractFile) => this.refresh(file.path);
     this.registerEvent(this.app.vault.on("create", onChange));
     this.registerEvent(this.app.vault.on("modify", onChange));
     this.registerEvent(this.app.vault.on("delete", onChange));
     this.registerEvent(
-      this.app.vault.on("rename", (file, oldPath) => (isInboxPath(file.path) || isInboxPath(oldPath)) && this.refresh()),
+      this.app.vault.on("rename", (file, oldPath) => {
+        this.refresh(file.path);
+        this.refresh(oldPath);
+      }),
     );
   }
 
   private async open(): Promise<void> {
     const { workspace } = this.app;
-    let leaf = workspace.getLeavesOfType(VIEW_TYPE)[0];
+    let leaf: WorkspaceLeaf | null | undefined = workspace.getLeavesOfType(VIEW_TYPE)[0];
     if (!leaf) {
-      leaf = workspace.getRightLeaf(false) ?? workspace.getLeaf("split");
+      leaf = workspace.getRightLeaf(false) ?? workspace.getRightLeaf(true);
+      if (!leaf) return;
       await leaf.setViewState({ type: VIEW_TYPE, active: true });
     }
     await workspace.revealLeaf(leaf);
   }
 
-  private refresh(): void {
+  private refresh(vaultPath: string): void {
+    if (!isInboxPath(vaultPath)) return;
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
-      if (leaf.view instanceof InboxView) void leaf.view.refresh();
+      if (leaf.view instanceof InboxView) void leaf.view.refresh(vaultPath);
     }
   }
 }

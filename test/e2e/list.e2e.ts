@@ -1,6 +1,6 @@
 import { expect } from "@wdio/globals";
 import { obsidianPage } from "wdio-obsidian-service";
-import { ask, card, cardIds, closeInbox, groupTitles, openInbox, panel, reset, snapshot } from "./helpers";
+import { ask, card, cardGroups, closeInbox, groupTitles, openInbox, panel, reset, snapshot } from "./helpers";
 
 const BROKEN = `---
 type: inbox
@@ -25,8 +25,14 @@ describe("listing awaiting items", () => {
 
   it("groups items by map then concern, root last, newest first, without answered items", async () => {
     await openInbox();
-    expect(await groupTitles()).toEqual(["m1 / c1", "m2", "No map"]);
-    expect(await cardIds()).toEqual(["m1-newer", "m1-older", "m2-open-question", "root-question"]);
+    expect(await groupTitles()).toEqual(["m1 / c1", "m1 / c2", "m2", "No map"]);
+    expect(await cardGroups()).toEqual([
+      { id: "m1-newer", group: "m1 / c1" },
+      { id: "m1-earlier", group: "m1 / c1" },
+      { id: "m1-c2", group: "m1 / c2" },
+      { id: "m2-open-question", group: "m2" },
+      { id: "root-question", group: "No map" },
+    ]);
   });
 
   it("writes no file while listing", async () => {

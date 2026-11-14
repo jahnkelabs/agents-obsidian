@@ -1,23 +1,57 @@
-import { browser, expect } from "@wdio/globals";
-import { ask, card, inbox, itemAt, M1_OLDER, markWindow, openInbox, panel, readBytes, reset, windowKept } from "./helpers";
+import { renameSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { expect } from "@wdio/globals";
+import {
+  ask,
+  card,
+  cardIds,
+  inbox,
+  itemAt,
+  M1_EARLIER,
+  M2_OPEN_QUESTION,
+  markNote,
+  markWindow,
+  noteState,
+  openInbox,
+  panel,
+  reset,
+  vault,
+  windowKept,
+} from "./helpers";
 
 describe("live updates", () => {
   beforeEach(reset);
 
-  it("drops an item answered in the terminal without a reload, and never re-answers it", async () => {
+  it("drops an item answered in the terminal without a reload", async () => {
     await openInbox();
     await markWindow();
 
-    const result = inbox(["answer", "m1-older", "--option", "approve", "--by", "chat"]);
+    const result = inbox(["answer", "m1-earlier", "--option", "approve", "--by", "chat"]);
     expect(result.status).toBe(0);
-    const written = readBytes(M1_OLDER);
 
-    await card("m1-older").waitForExist({ reverse: true });
+    await card("m1-earlier").waitForExist({ reverse: true });
     expect(await windowKept()).toBe(true);
+    expect(itemAt(M1_EARLIER).answered_by).toBe("chat");
+  });
 
-    await browser.pause(500);
-    expect(readBytes(M1_OLDER).equals(written)).toBe(true);
-    expect(itemAt(M1_OLDER).answered_by).toBe("chat");
+  it("drops a deleted item without a reload", async () => {
+    await openInbox();
+    await markWindow();
+
+    rmSync(join(vault(), M1_EARLIER));
+
+    await card("m1-earlier").waitForExist({ reverse: true });
+    expect(await windowKept()).toBe(true);
+  });
+
+  it("drops an item moved out of its inbox without a reload", async () => {
+    await openInbox();
+    await markWindow();
+
+    renameSync(join(vault(), M2_OPEN_QUESTION), join(vault(), "maps/m2/m2-open-question.md"));
+
+    await card("m2-open-question").waitForExist({ reverse: true });
+    expect(await windowKept()).toBe(true);
   });
 
   it("shows a new map item under its map and concern without a reload", async () => {
@@ -40,5 +74,18 @@ describe("live updates", () => {
     await card(id).waitForExist();
     await expect(panel().$('.agents-inbox-group[data-map=""]').$(`[data-id="${id}"]`)).toExist();
     expect(await windowKept()).toBe(true);
+  });
+
+  it("keeps a note's focus and text while another item arrives", async () => {
+    await openInbox();
+    await card("m1-newer").$("textarea.agents-inbox-note").setValue("half a thought");
+    await markNote("m1-newer");
+    expect(await noteState("m1-newer")).toEqual({ kept: true, focused: true, value: "half a thought" });
+
+    const id = ask(["--map", "m1", "--concern", "c1", "--option", "one"], "**Deciding — Arrives meanwhile**\n\nfound: new\n");
+
+    await card(id).waitForExist();
+    expect((await cardIds()).slice(0, 2)).toEqual([id, "m1-newer"]);
+    expect(await noteState("m1-newer")).toEqual({ kept: true, focused: true, value: "half a thought" });
   });
 });

@@ -6,7 +6,8 @@
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
-    "types": ["node", "@wdio/globals/types", "@wdio/mocha-framework", "wdio-obsidian-service"]
+    "types": ["node"]
   },
-  "include": ["src", "test", "vitest.config.ts", "wdio.conf.mts"]
+  "include": ["src", "test", "vitest.config.ts"],
+  "exclude": ["test/e2e"]
 }

@@ -8,11 +8,12 @@ import { type Answerer, type Item, parse, serialize } from "../../src/schema";
 export const VIEW_TYPE = "agents-inbox";
 
 export const ROOT_QUESTION = "inbox/root-question.md";
-export const M1_OLDER = "maps/m1/inbox/m1-older.md";
+export const M1_EARLIER = "maps/m1/inbox/m1-earlier.md";
 export const M1_NEWER = "maps/m1/inbox/m1-newer.md";
 export const M1_ANSWERED = "maps/m1/inbox/m1-answered.md";
+export const M1_C2 = "maps/m1/inbox/m1-c2.md";
 export const M2_OPEN_QUESTION = "maps/m2/inbox/m2-open-question.md";
-export const FIXTURES = [ROOT_QUESTION, M1_OLDER, M1_NEWER, M1_ANSWERED, M2_OPEN_QUESTION];
+export const FIXTURES = [ROOT_QUESTION, M1_EARLIER, M1_NEWER, M1_ANSWERED, M1_C2, M2_OPEN_QUESTION];
 
 const CLI = join(import.meta.dirname, "..", "..", "dist", "inbox.js");
 
@@ -85,13 +86,54 @@ export function holdLock(rel: string): () => void {
   return () => rmSync(lock, { force: true });
 }
 
+function answeredText(rel: string, answer: string, answered_by: Answerer): string {
+  const item = itemAt(rel);
+  return serialize({ ...item, answer, note: null, answered_by, status: "answered", answered_at: new Date().toISOString() });
+}
+
 export function answerUnderLock(rel: string, answer: string, answered_by: Answerer): void {
   const path = join(vault(), rel);
-  const item = parse(readFileSync(path, "utf8"));
-  const text = serialize({ ...item, answer, note: null, answered_by, status: "answered", answered_at: new Date().toISOString() });
   const tmp = join(dirname(path), `.e2e-${process.pid}.tmp`);
-  writeFileSync(tmp, text);
+  writeFileSync(tmp, answeredText(rel, answer, answered_by));
   renameSync(tmp, path);
+}
+
+export function rewrittenText(rel: string, changes: Partial<Item>): string {
+  return serialize({ ...itemAt(rel), ...changes });
+}
+
+export async function chatAnswersThenPanelClicks(
+  rel: string,
+  answer: string,
+  id: string,
+  option: string,
+  before: Record<string, string> = {},
+): Promise<{ clicked: boolean; text: string }> {
+  const path = join(vault(), rel);
+  const tmp = join(dirname(path), `.e2e-${process.pid}.tmp`);
+  const text = answeredText(rel, answer, "chat");
+  const others = Object.entries(before).map(([other, content]): [string, string] => [join(vault(), other), content]);
+  const clicked = await browser.executeObsidian(
+    (_obsidian, file, temp, content, type, cardId, choice, writes) => {
+      const fs = require("fs");
+      for (const [other, otherContent] of writes) fs.writeFileSync(other, otherContent);
+      fs.writeFileSync(temp, content);
+      fs.renameSync(temp, file);
+      const button = document.querySelector<HTMLButtonElement>(
+        `.workspace-leaf-content[data-type="${type}"] .agents-inbox-card[data-id="${cardId}"] button[data-option="${choice}"]`,
+      );
+      button?.click();
+      return button !== null;
+    },
+    path,
+    tmp,
+    text,
+    VIEW_TYPE,
+    id,
+    option,
+    others,
+  );
+  return { clicked, text };
 }
 
 export async function waitForObsidianToSee(rel: string, answered_by: Answerer): Promise<void> {
@@ -128,6 +170,23 @@ export async function openInbox(): Promise<void> {
   await browser.waitUntil(async () => (await panel().$$(".agents-inbox-card, .agents-inbox-empty").length) > 0, {
     timeoutMsg: "the inbox panel never rendered",
   });
+  await browser.waitUntil(async () => (await panel().isDisplayed()) && (await panelSettled()), {
+    timeoutMsg: "the inbox panel never settled",
+  });
+}
+
+function panelSettled(): Promise<boolean> {
+  return browser.execute(async (type) => {
+    const el = document.querySelector<HTMLElement>(`.workspace-leaf-content[data-type="${type}"]`);
+    if (!el) return false;
+    const rect = () => {
+      const { x, y, width, height } = el.getBoundingClientRect();
+      return JSON.stringify({ x, y, width, height });
+    };
+    const frame = () => new Promise<string>((resolve) => requestAnimationFrame(() => resolve(rect())));
+    const first = rect();
+    return (await frame()) === first && (await frame()) === first;
+  }, VIEW_TYPE);
 }
 
 export function cardIds(): Promise<string[]> {
@@ -145,6 +204,19 @@ export function groupTitles(): Promise<string[]> {
     (type) =>
       [...document.querySelectorAll<HTMLElement>(`.workspace-leaf-content[data-type="${type}"] .agents-inbox-group-title`)].map(
         (el) => el.textContent ?? "",
+      ),
+    VIEW_TYPE,
+  );
+}
+
+export function cardGroups(): Promise<{ id: string; group: string }[]> {
+  return browser.execute(
+    (type) =>
+      [...document.querySelectorAll<HTMLElement>(`.workspace-leaf-content[data-type="${type}"] .agents-inbox-card[data-id]`)].map(
+        (el) => ({
+          id: el.dataset.id ?? "",
+          group: el.closest(".agents-inbox-group")?.querySelector(".agents-inbox-group-title")?.textContent ?? "",
+        }),
       ),
     VIEW_TYPE,
   );
@@ -171,4 +243,34 @@ export async function markWindow(): Promise<void> {
 
 export function windowKept(): Promise<boolean> {
   return browser.execute(() => document.body.dataset.agentsE2e === "kept");
+}
+
+export async function markNote(id: string): Promise<void> {
+  await browser.execute(
+    (type, cardId) => {
+      const note = document.querySelector<HTMLElement>(
+        `.workspace-leaf-content[data-type="${type}"] .agents-inbox-card[data-id="${cardId}"] textarea.agents-inbox-note`,
+      );
+      if (note) note.dataset.agentsE2e = "kept";
+    },
+    VIEW_TYPE,
+    id,
+  );
+}
+
+export function noteState(id: string): Promise<{ kept: boolean; focused: boolean; value: string | null }> {
+  return browser.execute(
+    (type, cardId) => {
+      const note = document.querySelector<HTMLTextAreaElement>(
+        `.workspace-leaf-content[data-type="${type}"] .agents-inbox-card[data-id="${cardId}"] textarea.agents-inbox-note`,
+      );
+      return {
+        kept: note?.dataset.agentsE2e === "kept",
+        focused: note !== null && document.activeElement === note,
+        value: note?.value ?? null,
+      };
+    },
+    VIEW_TYPE,
+    id,
+  );
 }

@@ -12,7 +12,7 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test/e2e",
     "e2e": "npm run build && wdio run wdio.conf.mts",
     "deploy": "npm run build && node scripts/deploy.mjs"
   },

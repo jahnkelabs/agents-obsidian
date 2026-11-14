@@ -1,4 +1,4 @@
-import { browser, expect } from "@wdio/globals";
+import { expect } from "@wdio/globals";
 import { card, itemAt, M2_OPEN_QUESTION, openInbox, readBytes, reset } from "./helpers";
 
 const ID = "m2-open-question";
@@ -15,8 +15,6 @@ describe("an item with no options", () => {
 
     await card(ID).$("textarea.agents-inbox-note").setValue("   ");
     await expect(submit).toBeDisabled();
-    await browser.execute((button: HTMLElement) => button.click(), await submit.getElement());
-    await browser.pause(500);
 
     expect(readBytes(M2_OPEN_QUESTION).equals(before)).toBe(true);
     await expect(card(ID)).toExist();

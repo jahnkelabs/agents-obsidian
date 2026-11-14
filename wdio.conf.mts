@@ -1,7 +1,7 @@
+import { execSync } from "node:child_process";
 import { resolve } from "node:path";
 
 export const config: WebdriverIO.Config = {
-  runner: "local",
   framework: "mocha",
   specs: ["./test/e2e/**/*.e2e.ts"],
   maxInstances: 2,
@@ -17,6 +17,10 @@ export const config: WebdriverIO.Config = {
       },
     },
   ],
+
+  onPrepare: () => {
+    execSync("node esbuild.config.mjs", { stdio: "inherit" });
+  },
 
   services: ["obsidian"],
   reporters: ["spec"],

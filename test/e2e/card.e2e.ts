@@ -22,7 +22,7 @@ describe("a card", () => {
       { option: "yes", recommended: true },
       { option: "no", recommended: false },
     ]);
-    expect(await optionsOf("m1-older")).toEqual([{ option: "approve", recommended: false }]);
+    expect(await optionsOf("m1-earlier")).toEqual([{ option: "approve", recommended: false }]);
   });
 
   it("gives every card a note field", async () => {

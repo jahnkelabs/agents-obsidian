@@ -43,5 +43,4 @@ jobs:
           restore-keys: obsidian-${{ runner.os }}-
 
       - run: npm ci
-      - run: npm run build
       - run: xvfb-run --auto-servernum npx wdio run wdio.conf.mts

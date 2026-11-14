@@ -1,5 +1,7 @@
-import { expect } from "@wdio/globals";
-import { card, inboxAsync, itemAt, M1_NEWER, openInbox, reset, ROOT_QUESTION } from "./helpers";
+import { chmodSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { $$, browser, expect } from "@wdio/globals";
+import { card, inboxAsync, itemAt, M1_NEWER, openInbox, readBytes, reset, ROOT_QUESTION, vault } from "./helpers";
 
 describe("answering with an option", () => {
   beforeEach(reset);
@@ -34,5 +36,26 @@ describe("answering with an option", () => {
     expect(item.answer).toBe("no");
     expect(item.note).toBeNull();
     expect(item.answered_by).toBe("inbox");
+  });
+
+  it("reports a failed write, keeps the card, and re-enables its buttons", async function () {
+    if (process.getuid?.() === 0) this.skip();
+    const before = readBytes(ROOT_QUESTION);
+    await openInbox();
+    const dir = dirname(join(vault(), ROOT_QUESTION));
+    const mode = statSync(dir).mode;
+    chmodSync(dir, 0o555);
+    try {
+      await card("root-question").$('button[data-option="no"]').click();
+      await browser.waitUntil(
+        async () => (await $$(".notice").map((notice) => notice.getText())).some((text) => text.startsWith("Inbox:")),
+        { timeoutMsg: "no Inbox: notice appeared" },
+      );
+      await expect(card("root-question").$('button[data-option="yes"]')).toBeEnabled();
+      await expect(card("root-question").$('button[data-option="no"]')).toBeEnabled();
+    } finally {
+      chmodSync(dir, mode);
+    }
+    expect(readBytes(ROOT_QUESTION).equals(before)).toBe(true);
   });
 });

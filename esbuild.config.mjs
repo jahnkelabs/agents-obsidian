@@ -19,5 +19,5 @@ await build({
   platform: "node",
   format: "cjs",
   target: "es2022",
-  external: ["obsidian", "electron"],
+  external: ["obsidian"],
 });

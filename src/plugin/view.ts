@@ -1,7 +1,7 @@
-import { relative, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 import { Component, ItemView, MarkdownRenderer, Notice, type WorkspaceLeaf } from "obsidian";
 import { answerItem } from "../store";
-import { type Entry, type Group, listAwaiting } from "./inbox";
+import { type Broken, type Entry, type Group, group, groupKey, inboxMtimes, listAwaiting, mtimeOf } from "./inbox";
 
 export const VIEW_TYPE = "agents-inbox";
 
@@ -10,15 +10,31 @@ const REFRESH_DELAY_MS = 16;
 interface Settled {
   entry: Entry;
   message: string;
+  mtimes: Map<string, number>;
+}
+
+interface Card {
+  el: HTMLElement;
+  key: string;
+  component: Component;
+  setBusy: (busy: boolean) => void;
+}
+
+interface Section {
+  el: HTMLElement;
+  title: HTMLElement;
 }
 
 export class InboxView extends ItemView {
   private pending = new Map<string, Entry>();
   private settled = new Map<string, Settled>();
-  private drafts = new Map<string, string>();
+  private changed = new Set<string>();
+  private cards = new Map<string, Card>();
+  private sections = new Map<string, Section>();
+  private brokenCards = new Map<string, HTMLElement>();
+  private readonly empty = createDiv({ cls: "agents-inbox-empty", text: "Nothing waits on you." });
   private scheduled: { timer: number; done: Promise<void>; resolve: () => void } | null = null;
   private generation = 0;
-  private rendered: Component | null = null;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -53,109 +69,153 @@ export class InboxView extends ItemView {
     this.generation++;
   }
 
-  refresh(): Promise<void> {
+  refresh(vaultPath?: string): Promise<void> {
+    if (vaultPath !== undefined) this.changed.add(vaultPath);
     if (this.scheduled) return this.scheduled.done;
     let resolve!: () => void;
     const done = new Promise<void>((r) => (resolve = r));
     const timer = window.setTimeout(() => {
       this.scheduled = null;
-      this.settled.clear();
+      this.releaseSettled();
       void this.render().finally(resolve);
     }, REFRESH_DELAY_MS);
     this.scheduled = { timer, done, resolve };
     return done;
   }
 
+  private releaseSettled(): void {
+    const changed = [...this.changed].map((path) => join(this.docs, path));
+    this.changed.clear();
+    for (const [id, { mtimes }] of this.settled) {
+      if (changed.some((path) => !mtimes.has(path) || mtimeOf(path) !== mtimes.get(path))) this.settled.delete(id);
+    }
+  }
+
+  private held(): Entry[] {
+    const held = new Map(this.pending);
+    for (const [id, { entry }] of this.settled) held.set(id, entry);
+    return [...held.values()];
+  }
+
   private async render(): Promise<void> {
     const generation = ++this.generation;
     const { groups, broken } = listAwaiting(this.docs);
-    const held = [...this.pending.values(), ...[...this.settled.values()].map((s) => s.entry)];
-    const shown = withHeld(groups, held);
-    const component = new Component();
-    const list = createFragment();
+    const shown = withHeld(groups, this.held());
+    const entries = shown.flatMap((g) => g.entries);
 
-    for (const { path, error } of broken) {
-      const card = list.createDiv({ cls: "agents-inbox-card agents-inbox-broken" });
-      card.dataset.path = this.vaultPath(path);
-      card.createDiv({ cls: "agents-inbox-broken-path", text: this.vaultPath(path) });
-      card.createDiv({ cls: "agents-inbox-broken-error", text: error });
-    }
-
-    for (const group of shown) {
-      const section = list.createDiv({ cls: "agents-inbox-group" });
-      section.dataset.map = group.map ?? "";
-      section.dataset.concern = group.concern ?? "";
-      section.createEl("h4", { cls: "agents-inbox-group-title", text: groupTitle(group) });
-      for (const entry of group.entries) await this.renderCard(section, entry, component);
-    }
-
-    if (shown.length === 0 && broken.length === 0) {
-      list.createDiv({ cls: "agents-inbox-empty", text: "Nothing waits on you." });
+    const built = new Map<string, Card>();
+    for (const entry of entries) {
+      const key = JSON.stringify(entry.item);
+      if (this.cards.get(entry.id)?.key !== key) built.set(entry.id, await this.buildCard(entry, key));
     }
 
     if (generation !== this.generation) {
-      component.unload();
+      for (const card of built.values()) card.component.unload();
       return;
     }
-    const ids = new Set(shown.flatMap((g) => g.entries.map((e) => e.id)));
-    for (const id of this.drafts.keys()) if (!ids.has(id)) this.drafts.delete(id);
 
-    if (this.rendered) this.removeChild(this.rendered);
-    this.rendered = this.addChild(component);
-    this.contentEl.empty();
-    this.contentEl.append(list);
+    const ids = new Set(entries.map((e) => e.id));
+    for (const [id, card] of this.cards) {
+      if (ids.has(id) && !built.has(id)) continue;
+      this.removeChild(card.component);
+      card.el.remove();
+      this.cards.delete(id);
+    }
+    for (const [id, card] of built) {
+      this.addChild(card.component);
+      this.cards.set(id, card);
+    }
+    for (const entry of entries) this.cards.get(entry.id)?.setBusy(this.pending.has(entry.id));
+
+    const isEmpty = shown.length === 0 && broken.length === 0;
+    place(this.contentEl, [...this.placeBroken(broken), ...this.placeGroups(shown), ...(isEmpty ? [this.empty] : [])]);
   }
 
-  private async renderCard(parent: HTMLElement, entry: Entry, component: Component): Promise<void> {
-    const { item } = entry;
-    const card = parent.createDiv({ cls: "agents-inbox-card" });
-    card.dataset.id = entry.id;
-    card.dataset.kind = item.kind;
+  private placeBroken(broken: Broken[]): HTMLElement[] {
+    const next = new Map<string, HTMLElement>();
+    for (const { path, error } of broken) {
+      const key = `${path}\u0000${error}`;
+      next.set(key, this.brokenCards.get(key) ?? this.brokenCard(path, error));
+    }
+    this.brokenCards = next;
+    return [...next.values()];
+  }
 
-    const body = card.createDiv({ cls: "agents-inbox-body" });
+  private brokenCard(path: string, error: string): HTMLElement {
+    const card = createDiv({ cls: "agents-inbox-card agents-inbox-broken" });
+    card.dataset.path = this.vaultPath(path);
+    card.createDiv({ cls: "agents-inbox-broken-path", text: this.vaultPath(path) });
+    card.createDiv({ cls: "agents-inbox-broken-error", text: error });
+    return card;
+  }
+
+  private placeGroups(shown: Group[]): HTMLElement[] {
+    const next = new Map<string, Section>();
+    for (const g of shown) {
+      const key = groupKey(g);
+      const section = this.sections.get(key) ?? newSection(g);
+      next.set(key, section);
+      place(section.el, [section.title, ...g.entries.flatMap((e) => this.cards.get(e.id)?.el ?? [])]);
+    }
+    this.sections = next;
+    return [...next.values()].map((s) => s.el);
+  }
+
+  private async buildCard(entry: Entry, key: string): Promise<Card> {
+    const { item } = entry;
+    const component = new Component();
+    const el = createDiv({ cls: "agents-inbox-card" });
+    el.dataset.id = entry.id;
+    el.dataset.kind = item.kind;
+
+    const body = el.createDiv({ cls: "agents-inbox-body" });
     await MarkdownRenderer.render(this.app, item.body, body, this.vaultPath(entry.path), component);
 
     const settled = this.settled.get(entry.id);
     if (settled) {
-      card.addClass("is-settled");
-      card.createDiv({ cls: "agents-inbox-result", text: settled.message });
-      return;
+      el.addClass("is-settled");
+      el.createDiv({ cls: "agents-inbox-result", text: settled.message });
+      return { el, key, component, setBusy: () => {} };
     }
 
-    const busy = this.pending.has(entry.id);
-    card.toggleClass("is-busy", busy);
     const open = item.options.length === 0;
-    const note = card.createEl("textarea", {
+    const note = el.createEl("textarea", {
       cls: "agents-inbox-note",
       attr: { placeholder: open ? "Answer" : "Note" },
     });
-    note.value = this.drafts.get(entry.id) ?? "";
-    note.disabled = busy;
+    const actions = el.createDiv({ cls: "agents-inbox-actions" });
 
-    const actions = card.createDiv({ cls: "agents-inbox-actions" });
     if (!open) {
-      note.oninput = () => this.drafts.set(entry.id, note.value);
-      for (const option of item.options) {
+      const buttons = item.options.map((option) => {
         const button = actions.createEl("button", { cls: "agents-inbox-option", text: option });
         button.dataset.option = option;
         if (option === item.recommended) button.addClass("is-recommended", "mod-cta");
-        button.disabled = busy;
         button.onclick = () => void this.submit(entry, option, note.value.trim() || null);
-      }
-      return;
+        return button;
+      });
+      const setBusy = (busy: boolean) => {
+        el.toggleClass("is-busy", busy);
+        note.disabled = busy;
+        for (const button of buttons) button.disabled = busy;
+      };
+      return { el, key, component, setBusy };
     }
 
     const submit = actions.createEl("button", { cls: "agents-inbox-submit mod-cta", text: "Answer" });
+    let busy = false;
     const sync = () => (submit.disabled = busy || note.value.trim() === "");
-    sync();
-    note.oninput = () => {
-      this.drafts.set(entry.id, note.value);
-      sync();
-    };
+    note.oninput = sync;
     submit.onclick = () => {
       const text = note.value.trim();
       if (text !== "") void this.submit(entry, text, null);
     };
+    const setBusy = (next: boolean) => {
+      busy = next;
+      el.toggleClass("is-busy", busy);
+      note.disabled = busy;
+      sync();
+    };
+    return { el, key, component, setBusy };
   }
 
   private async submit(entry: Entry, answer: string, note: string | null): Promise<void> {
@@ -164,10 +224,9 @@ export class InboxView extends ItemView {
     await this.render();
     try {
       const { won, item } = await answerItem(entry.path, { answer, note, answered_by: "inbox" });
-      this.drafts.delete(entry.id);
       if (!won) {
         const message = `Already answered by ${item.answered_by}: ${item.answer}`;
-        this.settled.set(entry.id, { entry: { ...entry, item }, message });
+        this.settled.set(entry.id, { entry: { ...entry, item }, message, mtimes: inboxMtimes(this.docs) });
       }
     } catch (error) {
       new Notice(`Inbox: ${(error as Error).message}`);
@@ -182,21 +241,31 @@ export class InboxView extends ItemView {
   }
 }
 
-function groupTitle(group: Group): string {
-  if (group.map === null) return "No map";
-  return group.concern === null ? group.map : `${group.map} / ${group.concern}`;
+function groupTitle(g: Group): string {
+  if (g.map === null) return "No map";
+  return g.concern === null ? g.map : `${g.map} / ${g.concern}`;
+}
+
+function newSection(g: Group): Section {
+  const el = createDiv({ cls: "agents-inbox-group" });
+  el.dataset.map = g.map ?? "";
+  el.dataset.concern = g.concern ?? "";
+  const title = el.createEl("h4", { cls: "agents-inbox-group-title", text: groupTitle(g) });
+  return { el, title };
 }
 
 function withHeld(groups: Group[], held: Entry[]): Group[] {
-  const listed = new Set(groups.flatMap((g) => g.entries.map((e) => e.id)));
-  const missing = held.filter((e) => !listed.has(e.id));
-  if (missing.length === 0) return groups;
-  const result = groups.map((g) => ({ ...g, entries: [...g.entries] }));
-  for (const entry of missing) {
-    const { map, concern } = entry.item;
-    let target = result.find((g) => g.map === map && g.concern === concern);
-    if (!target) result.push((target = { map, concern, entries: [] }));
-    target.entries.push(entry);
-  }
-  return result;
+  const listed = groups.flatMap((g) => g.entries);
+  const ids = new Set(listed.map((e) => e.id));
+  const missing = held.filter((e) => !ids.has(e.id));
+  return missing.length === 0 ? groups : group([...listed, ...missing]);
+}
+
+function place(parent: HTMLElement, nodes: HTMLElement[]): void {
+  const keep = new Set<Element>(nodes);
+  for (const child of [...parent.children]) if (!keep.has(child)) child.remove();
+  nodes.forEach((node, index) => {
+    const at = parent.children.item(index);
+    if (at !== node) parent.insertBefore(node, at);
+  });
 }
