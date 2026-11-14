@@ -11,3 +11,13 @@ await build({
     js: '#!/usr/bin/env node\nimport { createRequire } from "node:module"; const require = createRequire(import.meta.url);',
   },
 });
+
+await build({
+  entryPoints: ["src/plugin/main.ts"],
+  outfile: "main.js",
+  bundle: true,
+  platform: "node",
+  format: "cjs",
+  target: "es2022",
+  external: ["obsidian"],
+});

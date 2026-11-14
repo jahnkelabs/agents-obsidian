@@ -1,0 +1,9 @@
+{
+  "id": "agents",
+  "name": "Agents",
+  "version": "0.1.0",
+  "minAppVersion": "1.9.0",
+  "description": "An inbox for questions that agent sessions put to you.",
+  "author": "jahnkelabs",
+  "isDesktopOnly": true
+}
