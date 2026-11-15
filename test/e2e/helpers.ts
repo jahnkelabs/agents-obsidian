@@ -200,6 +200,18 @@ export async function closeInbox(): Promise<void> {
   ]);
 }
 
+export async function closeItemTabs(): Promise<void> {
+  await browser.executeObsidian(({ app }, type) => app.workspace.detachLeavesOfType(type), ITEM_VIEW_TYPE);
+}
+
+export async function saveLayout(): Promise<void> {
+  await browser.executeObsidian(({ app }) => app.workspace.requestSaveLayout.run());
+}
+
+export function inboxLeaves(): Promise<number> {
+  return browser.executeObsidian(({ app }, type) => app.workspace.getLeavesOfType(type).length, VIEW_TYPE);
+}
+
 export async function reset(): Promise<void> {
   await closeInbox();
   await obsidianPage.resetVault();

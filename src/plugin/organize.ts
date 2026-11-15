@@ -57,6 +57,11 @@ export function stateOf(entry: Entry, unread: boolean): StateFilter[] {
   return states;
 }
 
+export function locationOf(map: string | null, concern: string | null): string {
+  if (map === null) return "No map";
+  return concern === null ? map : `${map} / ${concern}`;
+}
+
 export function ageBucket(createdAt: string, now: number): AgeBucket {
   const elapsed = now - Date.parse(createdAt);
   if (elapsed < DAY) return "Today";
@@ -67,10 +72,12 @@ function search(entry: Entry, query: string): Match["snippet"] | undefined {
   if (query === "") return null;
   const { item } = entry;
   if (title(item).toLowerCase().includes(query)) return null;
+  const pattern = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "iu");
   for (const text of [item.body, ...item.thread.map((message) => message.text)]) {
-    const at = text.toLowerCase().indexOf(query);
-    if (at !== -1) {
-      const end = at + query.length;
+    const found = pattern.exec(text);
+    if (found !== null) {
+      const at = found.index;
+      const end = at + found[0].length;
       return {
         before: text.slice(Math.max(0, at - SNIPPET_SPAN), at),
         hit: text.slice(at, end),
@@ -91,7 +98,7 @@ function passes(match: Match, filters: Filters): boolean {
 }
 
 function countChoices(entries: Entry[], searched: Match[]): Shown["counts"] {
-  const maps = [...new Set(entries.map((entry) => entry.item.map))].sort(compareMaps);
+  const maps = [...new Set([...entries.map((entry) => entry.item.map), null])].sort(compareMaps);
   const counts: Shown["counts"] = {
     state: new Map<StateFilter, number>(STATES.map((state) => [state, 0])),
     kind: new Map<Kind, number>(KINDS.map((kind) => [kind, 0])),
@@ -118,10 +125,8 @@ function label(entry: Entry, groupBy: GroupBy, now: number): Label {
   const { map, concern, kind, created_at } = entry.item;
   const rank = map === null ? 1 : 0;
   switch (groupBy) {
-    case "concern": {
-      const named = concern === null ? map : `${map} / ${concern}`;
-      return { key: groupKey(entry.item), title: named ?? "No map", rank, name: map ?? "", sub: concern ?? "" };
-    }
+    case "concern":
+      return { key: groupKey(entry.item), title: locationOf(map, concern), rank, name: map ?? "", sub: concern ?? "" };
     case "map":
       return { key: `map:${map ?? ""}`, title: map ?? "No map", rank, name: map ?? "", sub: "" };
     case "kind":
@@ -148,7 +153,7 @@ function group(matches: Match[], groupBy: GroupBy, now: number): Shown["groups"]
     .map(({ label: { key, title: heading }, entries }) => ({ key, title: heading, entries }));
 }
 
-function compareMaps(a: string | null, b: string | null): number {
+export function compareMaps(a: string | null, b: string | null): number {
   if ((a === null) !== (b === null)) return a === null ? 1 : -1;
   return (a ?? "").localeCompare(b ?? "");
 }

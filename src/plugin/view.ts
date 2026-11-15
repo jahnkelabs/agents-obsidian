@@ -1,10 +1,10 @@
-import { ItemView, Menu, SearchComponent, setIcon, type WorkspaceLeaf } from "obsidian";
-import { type Kind, KINDS } from "../schema";
+import { ExtraButtonComponent, ItemView, Menu, SearchComponent, setIcon, type WorkspaceLeaf } from "obsidian";
+import { KINDS } from "../schema";
 import { age, type Broken, type Entry, listAwaiting, title, unread } from "./inbox";
 import { place, REFRESH_DELAY_MS } from "./dom";
 import { ITEM_VIEW_TYPE } from "./item-view";
 import type AgentsPlugin from "./main";
-import { type Filters, type GroupBy, type Match, organize, type Shown, type Sort, type StateFilter } from "./organize";
+import { compareMaps, type Filters, locationOf, type GroupBy, type Match, organize, type Shown, type Sort, type StateFilter } from "./organize";
 
 export const VIEW_TYPE = "agents-inbox";
 
@@ -110,7 +110,7 @@ export class InboxView extends ItemView {
   async onOpen(): Promise<void> {
     this.contentEl.addClass("agents-inbox-view");
     place(this.contentEl, [this.toolbar, this.listEl]);
-    this.registerInterval(window.setInterval(() => this.updateAges(), AGE_INTERVAL_MS));
+    this.registerInterval(window.setInterval(() => (this.plugin.sidebar.groupBy === "age" ? this.draw() : this.updateAges()), AGE_INTERVAL_MS));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => this.select()));
     this.registerEvent(this.app.workspace.on("layout-change", () => this.select()));
     this.render();
@@ -213,7 +213,7 @@ export class InboxView extends ItemView {
     }
     const meta = el.createDiv({ cls: "agents-inbox-row-meta" });
     if (located) {
-      meta.createSpan({ cls: "agents-inbox-row-location", text: location(item.map, item.concern) });
+      meta.createSpan({ cls: "agents-inbox-row-location", text: locationOf(item.map, item.concern) });
       meta.createSpan({ cls: "agents-inbox-sep", text: "·", attr: { "aria-hidden": "true" } });
     }
     meta.createSpan({ cls: `agents-inbox-row-kind agents-inbox-kind-${item.kind}`, text: item.kind });
@@ -302,11 +302,11 @@ export class InboxView extends ItemView {
     menu.addSeparator();
     menu.addItem((item) => item.setTitle("Kind").setIsLabel(true));
     for (const kind of KINDS) {
-      addChoice(menu, kind, counts.kind.get(kind) ?? 0, this.filters.kind.has(kind), () => this.toggle<Kind>(this.filters.kind, kind));
+      addChoice(menu, kind, counts.kind.get(kind) ?? 0, this.filters.kind.has(kind), () => this.toggle(this.filters.kind, kind));
     }
     menu.addSeparator();
     menu.addItem((item) => item.setTitle("Map").setIsLabel(true));
-    const maps = [...new Set([...counts.map.keys(), ...this.filters.map])].sort(compareMaps);
+    const maps = [...counts.map.keys()];
     for (const map of maps) {
       addChoice(menu, map ?? "No map", counts.map.get(map) ?? 0, this.filters.map.has(map), () => this.toggle(this.filters.map, map));
     }
@@ -371,32 +371,16 @@ function stateChoices(): StateFilter[] {
   return Object.keys(STATE) as StateFilter[];
 }
 
-function compareMaps(a: string | null, b: string | null): number {
-  if ((a === null) !== (b === null)) return a === null ? 1 : -1;
-  return (a ?? "").localeCompare(b ?? "");
-}
-
-function location(map: string | null, concern: string | null): string {
-  if (map === null) return "no map";
-  return concern === null ? map : `${map} / ${concern}`;
-}
 
 function oneLine(text: string): string {
   return text.replace(/\s+/g, " ");
 }
 
 function iconButton(parent: HTMLElement, cls: string, icon: string, label: string, action: () => void): HTMLElement {
-  const el = parent.createDiv({ cls: `clickable-icon ${cls}`, attr: { role: "button", tabindex: "0", "aria-label": label } });
-  setIcon(el, icon);
-  el.onclick = (event) => {
-    event.stopPropagation();
-    action();
-  };
-  el.onkeydown = (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    action();
-  };
+  const { extraSettingsEl: el } = new ExtraButtonComponent(parent).setIcon(icon).setTooltip(label).onClick(action);
+  el.addClass(cls);
+  el.setAttr("aria-label", label);
+  el.addEventListener("click", (event) => event.stopPropagation());
   return el;
 }
 

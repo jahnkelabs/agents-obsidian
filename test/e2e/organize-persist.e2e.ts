@@ -4,13 +4,18 @@ import {
   arrange,
   chips,
   closeInbox,
+  closeItemTabs,
+  inboxLeaves,
+  saveLayout,
   groupTitles,
   header,
   itemTabs,
+  M1_NEWER,
   openInbox,
   openItem,
   pick,
   pluginDataFile,
+  reply,
   reset,
   ROOT_THREAD,
   row,
@@ -33,6 +38,12 @@ describe("organizing across a restart", () => {
     });
 
     await arrange("Kind", "Oldest first");
+    reply("m1-newer", "A reply you read after arranging.\n");
+    await unreadMark("m1-newer").waitForExist();
+    await openItem("m1-newer");
+    await browser.waitUntil(async () => (await seenPaths()).includes(M1_NEWER), {
+      timeoutMsg: `the plugin's saved data never recorded ${M1_NEWER} as seen`,
+    });
     await search("root");
     await pick("filter", "decide");
     expect(await rowIds()).toEqual(["root-question", "root-thread"]);
@@ -40,9 +51,12 @@ describe("organizing across a restart", () => {
       timeoutMsg: "the plugin's saved data never recorded the group-by and sort",
     });
 
-    await closeInbox();
+    await closeItemTabs();
+    await saveLayout();
     await browser.reloadObsidian();
+    expect(await inboxLeaves()).toBe(1);
     await openInbox();
+    expect(await inboxLeaves()).toBe(1);
 
     expect((await itemTabs()).paths).toEqual([]);
     expect(await groupTitles()).toEqual(["decide", "approve"]);
@@ -62,5 +76,15 @@ describe("organizing across a restart", () => {
 
     expect(await groupTitles()).toEqual(["m1 / c1", "m1 / c2", "m2", "No map"]);
     expect(await rowIds()).toEqual(["m1-newer", "m1-earlier", "m1-c2", "m2-pick-many", "m2-open-question", "root-thread", "root-question"]);
+  });
+
+  it("keeps a known saved value when the other one is unknown", async () => {
+    await closeInbox();
+    writeFileSync(await pluginDataFile(), JSON.stringify({ seen: {}, sidebar: { groupBy: "kind", sort: 7 } }));
+    await browser.reloadObsidian();
+    await openInbox();
+
+    expect(await groupTitles()).toEqual(["decide", "approve"]);
+    expect(await rowIds()).toEqual(["root-thread", "m2-pick-many", "root-question", "m2-open-question", "m1-newer", "m1-c2", "m1-earlier"]);
   });
 });

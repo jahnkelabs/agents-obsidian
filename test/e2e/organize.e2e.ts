@@ -1,4 +1,7 @@
+import { rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { browser, expect } from "@wdio/globals";
+import { appendMessage } from "../../src/store";
 import {
   arrange,
   ask,
@@ -22,7 +25,11 @@ import {
   seenPaths,
   snapshot,
   snippet,
+  M1_C2,
+  M2_OPEN_QUESTION,
+  M2_PICK_MANY,
   unreadMark,
+  vault,
   windowKept,
 } from "./helpers";
 
@@ -60,6 +67,49 @@ describe("organizing the inbox", () => {
     await expect(snippet("m2-open-question").$("mark")).toHaveText("What should the name");
 
     expect(snapshot()).toEqual(before);
+  });
+
+  it("filters to items waiting on the agent once your message is the last entry", async () => {
+    await appendMessage(join(vault(), M1_C2), { author: "you", text: "Which one is cheaper?\n" });
+    await browser.waitUntil(async () => (await filterCounts())["Waiting on the agent"] === 1, {
+      timeoutMsg: "the Waiting on the agent count never reached 1",
+    });
+
+    await pick("filter", "Waiting on the agent");
+    expect(await rowIds()).toEqual(["m1-c2"]);
+    expect(await chips()).toEqual(["state: waiting on agent"]);
+    expect(await header()).toBe("Inbox 1 of 7");
+  });
+
+  it("keeps a broken item visible under a search that matches nothing", async () => {
+    writeFileSync(join(vault(), "inbox/broken.md"), "---\ntype: nope\n---\nNot an item.\n");
+    await $(`.agents-inbox-broken[data-path="inbox/broken.md"]`).waitForExist();
+
+    await search("zzzz-matches-nothing");
+    await expect(noMatch()).toBeDisplayed();
+    await expect($(`.agents-inbox-broken[data-path="inbox/broken.md"]`)).toBeDisplayed();
+  });
+
+  it("adds an item that changes into a match while a filter is active", async () => {
+    await pick("filter", "New reply from the agent");
+    expect(await rowIds()).toEqual(["root-thread"]);
+
+    reply("m1-c2", "A reply that makes this item match.\n");
+    await browser.waitUntil(async () => (await rowIds()).includes("m1-c2"), { timeoutMsg: "m1-c2 never joined the filtered list" });
+    expect(await header()).toBe("Inbox 2 of 7");
+  });
+
+  it("drops a chosen map from the menu once it holds no waiting item, and keeps its chip", async () => {
+    await pick("filter", "m2");
+    expect(await rowIds()).toEqual(["m2-pick-many", "m2-open-question"]);
+
+    rmSync(join(vault(), M2_PICK_MANY));
+    rmSync(join(vault(), M2_OPEN_QUESTION));
+    await browser.waitUntil(async () => !("m2" in (await filterCounts())), {
+      timeoutMsg: "the menu still offered m2 after its last item left",
+    });
+    expect(await chips()).toEqual(["map: m2"]);
+    expect(await rowIds()).toEqual([]);
   });
 
   it("filters by state, kind, and map with a count on each choice, and removes a section by its chip", async () => {
@@ -129,7 +179,7 @@ describe("organizing the inbox", () => {
     ]);
     await expect(location("m1-newer")).toHaveText("m1 / c1");
     await expect(location("m2-pick-many")).toHaveText("m2");
-    await expect(location("root-question")).toHaveText("no map");
+    await expect(location("root-question")).toHaveText("No map");
 
     const today = ask([], "**Deciding — Asked today**\n\nfound: new\n");
     await row(today).waitForExist();

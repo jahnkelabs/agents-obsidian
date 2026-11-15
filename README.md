@@ -26,7 +26,7 @@ Exit codes: 0 success, 2 error, 3 another answer already won, 4 `wait` timed out
 
 ## The Obsidian panel
 
-The `agents` plugin lists every item that waits on you in Obsidian's right sidebar, one row per item: its title, kind, and age. It reads `inbox/` and `maps/*/inbox/` under the vault root, so the vault is your docs directory. Items group by map, then concern, newest first, with root items under "No map". A dot marks a row whose agent replied since you last viewed it. The plugin keeps that state in its own data, never in the item.
+The `agents` plugin lists every item that waits on you in Obsidian's right sidebar, one row per item: its title, kind, and age. It reads `inbox/` and `maps/*/inbox/` under the vault root, so the vault is your docs directory. By default, items group by map, then concern, newest first, with root items under "No map". A dot marks a row whose agent replied since you last viewed it. The plugin keeps that state in its own data, never in the item.
 
 The search box above the rows narrows them as you type, ignoring case. It matches an item's title, body, and thread, and a body or thread match shows a snippet with the match highlighted. The filter button filters by state, kind, and map, with a count on each choice. Choices inside one section combine with "or", and sections combine with "and". Each active section shows as a chip, and its × removes it. The header then reads `Inbox <shown> of <waiting>`. The group-by button groups by map and concern, map, kind, age, or not at all, and sorts by newest first, oldest first, or latest activity. A grouping that is not by map shows each row's map and concern. The plugin keeps the grouping and the order across restarts, and each session opens with an empty search and no filters.
 

@@ -4,6 +4,7 @@ import type { Entry } from "../src/plugin/inbox";
 import { ageBucket, type Filters, type GroupBy, organize, type Sort, stateOf, type View } from "../src/plugin/organize";
 
 const NOW = Date.parse("2026-11-14T12:00:00.000Z");
+const MODES: GroupBy[] = ["concern", "map", "kind", "age", "none"];
 const HOUR = 60 * 60_000;
 const DAY = 24 * HOUR;
 
@@ -105,8 +106,7 @@ describe("grouping and order", () => {
   });
 
   it("gives the same group the same key on every call", () => {
-    const modes: GroupBy[] = ["concern", "map", "kind", "age", "none"];
-    for (const groupBy of modes) {
+    for (const groupBy of MODES) {
       const first = organize(ENTRIES, view({ groupBy }), NEVER, NOW);
       const later = organize([...ENTRIES].reverse(), view({ groupBy, sort: "oldest" }), NEVER, NOW + 60_000);
       expect(later.groups.map((g) => g.key).sort()).toEqual(first.groups.map((g) => g.key).sort());
@@ -116,9 +116,8 @@ describe("grouping and order", () => {
 });
 
 describe("every item exactly once", () => {
-  const modes: GroupBy[] = ["concern", "map", "kind", "age", "none"];
   const sorts: Sort[] = ["newest", "oldest", "activity"];
-  for (const groupBy of modes) {
+  for (const groupBy of MODES) {
     for (const sort of sorts) {
       it(`${groupBy} grouping, ${sort} sort`, () => {
         const shown = organize(ENTRIES, view({ groupBy, sort }), NEVER, NOW);
@@ -152,7 +151,12 @@ describe("sort", () => {
 });
 
 describe("search", () => {
-  const long = (n: number, ch: string) => ch.repeat(n);
+
+  it("highlights the hit itself when a case change before it alters the text length", () => {
+    const body = "**Deciding — plain**\n\nİstanbul ofisi review bekliyor\n";
+    const shown = organize([entry("t", { body })], view({ query: "review", groupBy: "none" }), NEVER, NOW);
+    expect(shown.groups[0].entries[0].snippet?.hit).toBe("review");
+  });
 
   it("matches a title ignoring case, with no snippet", () => {
     const shown = organize(ENTRIES, view({ query: "A1", groupBy: "none" }), NEVER, NOW);
@@ -161,10 +165,10 @@ describe("search", () => {
   });
 
   it("matches a body below the title, with about 40 characters each side", () => {
-    const body = `**Deciding — plain**\n\n${long(60, "x")}NeedLE${long(60, "y")}\n`;
+    const body = `**Deciding — plain**\n\n${"x".repeat(60)}NeedLE${"y".repeat(60)}\n`;
     const shown = organize([entry("body", { body }), ENTRIES[0]], view({ query: "needle" }), NEVER, NOW);
     expect(flat(shown)).toEqual(["body"]);
-    expect(shown.groups[0].entries[0].snippet).toEqual({ before: long(40, "x"), hit: "NeedLE", after: long(40, "y") });
+    expect(shown.groups[0].entries[0].snippet).toEqual({ before: "x".repeat(40), hit: "NeedLE", after: "y".repeat(40) });
   });
 
   it("keeps a short snippet whole at the edges of the text", () => {
@@ -270,6 +274,7 @@ describe("counts", () => {
     expect(counts.map.get("alpha")).toBe(4);
     expect(counts.map.get("beta")).toBe(0);
     expect(counts.map.get(null)).toBe(0);
+    expect(Object.fromEntries(counts.state)).toEqual({ "new-reply": 0, "waiting-on-agent": 1 });
   });
 
   it("do not change when filters change", () => {
@@ -282,6 +287,11 @@ describe("counts", () => {
     );
     expect(narrowed.shown).toBe(0);
     expect(narrowed.counts).toEqual(open);
+  });
+
+  it("offer No map with a count of 0 when every waiting item has a map", () => {
+    const { counts } = organize([entry("x", { map: "alpha" })], view(), NEVER, NOW);
+    expect(new Map(counts.map)).toEqual(new Map<string | null, number>([["alpha", 1], [null, 0]]));
   });
 
   it("order the map choices by name with No map last", () => {
