@@ -704,3 +704,157 @@
 .agents-inbox-item.is-busy .agents-inbox-dock {
   opacity: 0.6;
 }
+
+.agents-inbox-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--size-4-2);
+  margin-bottom: calc(-1 * var(--size-4-3));
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.agents-inbox-context-where {
+  color: var(--text-normal);
+  font-weight: var(--font-semibold);
+}
+
+.agents-inbox-context-link {
+  color: var(--link-color);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.agents-inbox-context-link:hover,
+.agents-inbox-context-link:focus-visible {
+  color: var(--link-color-hover);
+  text-decoration: underline;
+}
+
+.agents-inbox-context-link.is-open {
+  color: var(--text-normal);
+  font-weight: var(--font-semibold);
+}
+
+.agents-inbox-doc.view-content {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  font-family: var(--font-interface);
+}
+
+.agents-inbox-doc-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--size-4-2);
+  padding: var(--size-4-2) var(--size-4-3);
+  border-bottom: 1px solid var(--background-modifier-border);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.agents-inbox-doc-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-monospace);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents-inbox-doc-open {
+  flex: none;
+  font-size: var(--font-ui-smaller);
+}
+
+.agents-inbox-doc-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--size-4-4) var(--size-4-6) var(--size-4-8);
+}
+
+.agents-inbox-doc-body {
+  font-family: var(--font-text);
+}
+
+.agents-inbox-doc-missing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--size-4-2);
+  padding: var(--size-4-12) var(--size-4-4);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.agents-inbox-doc-missing-title {
+  color: var(--text-normal);
+  font-weight: var(--font-semibold);
+}
+
+.agents-inbox-doc-missing-path {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  word-break: break-all;
+}
+
+.agents-inbox-concerns tr.is-item td,
+.agents-inbox-doc-body tr.is-cited td {
+  background-color: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
+}
+
+.agents-inbox-concerns tr.is-item td:first-child,
+.agents-inbox-doc-body tr.is-cited td:first-child {
+  box-shadow: inset 3px 0 0 var(--interactive-accent);
+}
+
+.agents-inbox-outline,
+.agents-inbox-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-4-1);
+  margin: 0 0 var(--size-4-4);
+  padding: 0 0 var(--size-4-3);
+  border-bottom: 1px solid var(--background-modifier-border);
+  font-size: var(--font-ui-smaller);
+  list-style: none;
+}
+
+.agents-inbox-outline .agents-inbox-outline-entry {
+  height: auto;
+  padding: var(--size-2-1) var(--size-4-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-l);
+  background-color: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+}
+
+.agents-inbox-outline .agents-inbox-outline-entry:hover,
+.agents-inbox-outline .agents-inbox-outline-entry:focus-visible {
+  background-color: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.agents-inbox-step {
+  padding: var(--size-2-1) var(--size-4-2);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-l);
+  color: var(--text-faint);
+}
+
+.agents-inbox-step.is-done {
+  color: var(--text-muted);
+}
+
+.agents-inbox-step.is-current {
+  border-color: var(--interactive-accent);
+  background-color: color-mix(in srgb, var(--interactive-accent) 15%, transparent);
+  color: var(--text-accent);
+  font-weight: var(--font-semibold);
+}

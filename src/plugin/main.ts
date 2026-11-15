@@ -1,5 +1,6 @@
 import { relative, sep } from "node:path";
 import { FileSystemAdapter, Notice, Plugin, type TAbstractFile, type WorkspaceLeaf } from "obsidian";
+import { DOC_VIEW_TYPE, type DocState, HOVER_SOURCE, InboxDocView } from "./doc-view";
 import { type Entry, isInboxPath, lastAgentAt, unread } from "./inbox";
 import { InboxItemView, ITEM_VIEW_TYPE } from "./item-view";
 import type { GroupBy, Sort } from "./organize";
@@ -21,6 +22,7 @@ export default class AgentsPlugin extends Plugin {
   docs = "";
   sidebar: Sidebar = DEFAULT_SIDEBAR;
   private seen: Record<string, number> = {};
+  private readonly docLeaves = new WeakMap<WorkspaceLeaf, WorkspaceLeaf>();
 
   async onload(): Promise<void> {
     const adapter = this.app.vault.adapter;
@@ -35,6 +37,8 @@ export default class AgentsPlugin extends Plugin {
 
     this.registerView(VIEW_TYPE, (leaf) => new InboxView(leaf, this));
     this.registerView(ITEM_VIEW_TYPE, (leaf) => new InboxItemView(leaf, this));
+    this.registerView(DOC_VIEW_TYPE, (leaf) => new InboxDocView(leaf, this));
+    this.registerHoverLinkSource(HOVER_SOURCE, { display: "Agents", defaultMod: false });
     this.addRibbonIcon("inbox", "Open inbox", () => void this.open());
     this.addCommand({ id: "open-inbox", name: "Open inbox", callback: () => void this.open() });
 
@@ -48,6 +52,7 @@ export default class AgentsPlugin extends Plugin {
         this.refresh(oldPath);
       }),
     );
+    this.registerEvent(this.app.workspace.on("layout-change", () => this.refreshContext()));
   }
 
   vaultPath(path: string): string {
@@ -89,6 +94,38 @@ export default class AgentsPlugin extends Plugin {
     workspace.setActiveLeaf(leaf, { focus: true });
   }
 
+  async openContext(itemLeaf: WorkspaceLeaf, target: Omit<DocState, "itemPath">): Promise<void> {
+    const { workspace } = this.app;
+    const itemPath = pathOf(itemLeaf.getViewState().state, "path") ?? "";
+    const leaf = this.docLeaf(itemLeaf) ?? workspace.createLeafBySplit(itemLeaf, "vertical");
+    this.docLeaves.set(itemLeaf, leaf);
+    await this.showDoc(leaf, { ...target, itemPath });
+    workspace.setActiveLeaf(itemLeaf, { focus: true });
+  }
+
+  async showDoc(leaf: WorkspaceLeaf, state: DocState): Promise<void> {
+    await leaf.setViewState({ type: DOC_VIEW_TYPE, state: { ...state }, active: false });
+    this.refreshContext();
+  }
+
+  contextPath(itemLeaf: WorkspaceLeaf): string | null {
+    return pathOf(this.docLeaf(itemLeaf)?.getViewState().state, "path");
+  }
+
+  private docLeaf(itemLeaf: WorkspaceLeaf): WorkspaceLeaf | null {
+    const leaves = this.app.workspace.getLeavesOfType(DOC_VIEW_TYPE);
+    const known = this.docLeaves.get(itemLeaf);
+    if (known !== undefined && leaves.includes(known)) return known;
+    const itemPath = pathOf(itemLeaf.getViewState().state, "path");
+    return itemPath === null ? null : (leaves.find((leaf) => pathOf(leaf.getViewState().state, "itemPath") === itemPath) ?? null);
+  }
+
+  private refreshContext(): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(ITEM_VIEW_TYPE)) {
+      if (leaf.view instanceof InboxItemView) leaf.view.renderContext();
+    }
+  }
+
   private async open(): Promise<void> {
     const { workspace } = this.app;
     let leaf: WorkspaceLeaf | null | undefined = workspace.getLeavesOfType(VIEW_TYPE)[0];
@@ -111,7 +148,10 @@ export default class AgentsPlugin extends Plugin {
   }
 
   private refresh(vaultPath: string): void {
-    if (!isInboxPath(vaultPath)) return;
+    if (!isInboxPath(vaultPath)) {
+      if (vaultPath.startsWith("maps/")) this.refreshContext();
+      return;
+    }
     this.refreshList();
     for (const leaf of this.app.workspace.getLeavesOfType(ITEM_VIEW_TYPE)) {
       if (leaf.view instanceof InboxItemView) void leaf.view.refresh(vaultPath);
@@ -125,6 +165,11 @@ function readSidebar(saved: unknown): Sidebar {
     groupBy: oneOf(GROUP_BY, fields.groupBy) ?? DEFAULT_SIDEBAR.groupBy,
     sort: oneOf(SORT, fields.sort) ?? DEFAULT_SIDEBAR.sort,
   };
+}
+
+function pathOf(state: Record<string, unknown> | undefined, key: string): string | null {
+  const value = state?.[key];
+  return typeof value === "string" ? value : null;
 }
 
 function oneOf<T extends string>(choices: Record<T, string>, value: unknown): T | undefined {
