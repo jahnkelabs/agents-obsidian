@@ -1,7 +1,8 @@
 import { spawn, spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
-import { $, browser, expect } from "@wdio/globals";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, relative, sep } from "node:path";
+import { $, $$, browser, expect } from "@wdio/globals";
 import { obsidianPage } from "wdio-obsidian-service";
 import { type Answerer, type Item, parse, serialize } from "../../src/schema";
 
@@ -68,6 +69,41 @@ export function ask(args: string[], body: string): string {
 export function reply(id: string, text: string): void {
   const result = inbox(["reply", id], text);
   if (result.status !== 0) throw new Error(`inbox reply failed: ${result.stderr}`);
+}
+
+export function revise(id: string, args: string[]): void {
+  const result = inbox(["revise", id, ...args]);
+  if (result.status !== 0) throw new Error(`inbox revise failed: ${result.stderr}`);
+}
+
+export function revisedText(rel: string, args: string[]): string {
+  const docs = mkdtempSync(join(tmpdir(), "inbox-e2e-"));
+  try {
+    const copy = join(docs, "inbox", basename(rel));
+    mkdirSync(dirname(copy));
+    writeFileSync(copy, readBytes(rel));
+    const result = spawnSync("node", [CLI, "revise", basename(rel, ".md"), ...args], {
+      env: { ...process.env, INBOX_DOCS_DIR: docs },
+      encoding: "utf8",
+    });
+    if (result.status !== 0) throw new Error(`inbox revise failed: ${result.stderr}`);
+    return readFileSync(copy, "utf8");
+  } finally {
+    rmSync(docs, { recursive: true, force: true });
+  }
+}
+
+export function writeUnderLock(rel: string, text: string): void {
+  const path = join(vault(), rel);
+  const tmp = join(dirname(path), `.e2e-${process.pid}.tmp`);
+  writeFileSync(tmp, text);
+  renameSync(tmp, path);
+}
+
+export async function waitForNotice(pattern: RegExp): Promise<void> {
+  await browser.waitUntil(async () => (await $$(".notice").map((notice) => notice.getText())).some((text) => pattern.test(text)), {
+    timeoutMsg: `no notice matched ${pattern}`,
+  });
 }
 
 export function readBytes(rel: string): Buffer {
@@ -214,8 +250,13 @@ export async function openInbox(): Promise<void> {
   });
 }
 
+export async function dismissNotices(): Promise<void> {
+  await browser.execute(() => document.querySelectorAll(".notice").forEach((notice) => notice.remove()));
+}
+
 export async function openItem(id: string): Promise<void> {
   await openInbox();
+  await dismissNotices();
   await row(id).click();
   const selector = `${TABS} .agents-inbox-item[data-id="${id}"]`;
   await browser.waitUntil(

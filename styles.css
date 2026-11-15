@@ -293,6 +293,21 @@
   background-color: var(--interactive-accent);
 }
 
+.agents-inbox-revision {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--size-2-3);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: var(--line-height-tight);
+  --icon-size: var(--icon-xs);
+}
+
+.agents-inbox-revision-icon {
+  display: flex;
+  flex: none;
+}
+
 .agents-inbox-waiting,
 .agents-inbox-not-sent {
   display: flex;

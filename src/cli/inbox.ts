@@ -2,11 +2,12 @@ import { readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { type Answerer, type Item, type Kind, type Message, type Select, SchemaError } from "../schema";
-import { answerItem, answerOf, appendMessage, createItem, docsDir, findItem, readItem } from "../store";
+import { answerItem, answerOf, appendMessage, createItem, docsDir, findItem, readItem, reviseChoices } from "../store";
 
 const EXIT_ERROR = 2;
 const EXIT_LOST = 3;
 const EXIT_TIMEOUT = 4;
+const EXIT_STALE = 5;
 const POLL_MS = 1000;
 const MAX_BAD_READS = 3;
 
@@ -15,9 +16,10 @@ const USAGE = `usage:
             [--option <label> ...] [--recommended <label> ...]   < body
   inbox wait <id> [--timeout <seconds>]
   inbox reply <id>   < message
+  inbox revise <id> ([--select one|many] [--option <label> ...] [--recommended <label> ...] | --open) [--note <markdown>]
   inbox answer <id> (--option <label> ... | --text <answer>) [--note <text>] [--by inbox|chat]`;
 
-const commands: Record<string, (args: string[]) => Promise<number>> = { ask, wait, reply, answer };
+const commands: Record<string, (args: string[]) => Promise<number>> = { ask, wait, reply, revise, answer };
 
 const [command = "", ...args] = process.argv.slice(2);
 try {
@@ -122,6 +124,38 @@ async function reply(args: string[]): Promise<number> {
   return 0;
 }
 
+async function revise(args: string[]): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: {
+      select: { type: "string" },
+      option: { type: "string", multiple: true },
+      recommended: { type: "string", multiple: true },
+      open: { type: "boolean", default: false },
+      note: { type: "string" },
+    },
+  });
+  const changes = [values.select, values.option, values.recommended].filter((value) => value !== undefined).length;
+  if (values.open && changes > 0) throw new Error("--open takes no --select, --option, or --recommended");
+  if (!values.open && changes === 0) throw new Error("give --open, or at least one of --select, --option, --recommended");
+  const path = locate(positionals);
+
+  const { revised, item } = await reviseChoices(path, {
+    select: values.select as Select | undefined,
+    options: values.option,
+    recommended: values.recommended,
+    open: values.open,
+    note: values.note,
+  });
+  if (!revised) {
+    console.log(JSON.stringify(answerOf(item)));
+    return EXIT_LOST;
+  }
+  console.log(JSON.stringify({ revised: true }));
+  return 0;
+}
+
 async function answer(args: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args,
@@ -138,11 +172,16 @@ async function answer(args: string[]): Promise<number> {
   }
   const path = locate(positionals);
 
-  const { won, item } = await answerItem(path, {
-    answer: values.option === undefined ? values.text! : labels(readItem(path).select, values.option),
+  const { won, stale, item } = await answerItem(path, {
+    answer: values.option ?? values.text!,
     note: values.note ?? null,
     answered_by: values.by as Answerer,
   });
+  if (stale) {
+    const { select, options, recommended } = item;
+    console.log(JSON.stringify({ stale: true, select, options, recommended }));
+    return EXIT_STALE;
+  }
   console.log(JSON.stringify(answerOf(item)));
   return won ? 0 : EXIT_LOST;
 }

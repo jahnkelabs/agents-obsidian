@@ -31,8 +31,11 @@ interface Rendered {
 
 interface AnswerSection {
   key: string;
+  open: boolean;
   el: HTMLElement;
   sync: () => void;
+  picked: () => string[];
+  note: () => string;
 }
 
 function ago(at: string): string {
@@ -189,7 +192,11 @@ export class InboxItemView extends ItemView {
     if (awaiting) {
       this.statusEl.empty();
       const key = JSON.stringify([item.select, item.options, item.recommended]);
-      if (this.answerSection?.key !== key) this.answerSection = this.buildAnswer(item, key);
+      if (this.answerSection?.key !== key) {
+        const previous = this.answerSection;
+        this.answerSection = this.buildAnswer(item, key, previous);
+        if (previous) this.choicesChanged(previous.picked().filter((option) => !item.options.includes(option)));
+      }
     } else {
       this.showAnswered(item);
       this.answerSection = null;
@@ -204,10 +211,10 @@ export class InboxItemView extends ItemView {
       this.bodyEl,
       this.threadEl,
       ...(waiting ? [this.waitingEl] : []),
-      ...(awaiting ? [] : [this.statusEl]),
+      ...(awaiting ? (this.answerSection ? [this.answerSection.el] : []) : [this.statusEl]),
     ]);
     const docked = awaiting
-      ? [...(this.answerSection ? [this.answerSection.el] : []), this.composeEl]
+      ? [this.composeEl]
       : draft
         ? [this.notSentEl, this.composeEl]
         : [];
@@ -290,13 +297,31 @@ export class InboxItemView extends ItemView {
     } else {
       setTooltip(el, at, { placement: "left" });
     }
-    const text = el.createDiv({ cls: "agents-inbox-message-text markdown-rendered" });
     const component = this.addChild(new Component());
-    await MarkdownRenderer.render(this.app, message.text, text, this.path, component);
+    if (message.text.trim() !== "") {
+      const text = el.createDiv({ cls: "agents-inbox-message-text markdown-rendered" });
+      await MarkdownRenderer.render(this.app, message.text, text, this.path, component);
+    }
+    if (message.revision) {
+      const { added, removed, recommended } = message.revision;
+      el.addClass("is-revision");
+      const parts = ["revised the choices"];
+      if (added.length > 0) parts.push(`added ${added.join(", ")}`);
+      if (removed.length > 0) parts.push(`removed ${removed.join(", ")}`);
+      if (recommended.length > 0) parts.push(`recommended ${recommended.join(", ")}`);
+      const line = el.createDiv({ cls: "agents-inbox-revision" });
+      setIcon(line.createSpan({ cls: "agents-inbox-revision-icon" }), "list-checks");
+      line.createSpan({ cls: "agents-inbox-revision-text", text: parts.join(" · ") });
+    }
     return { key, el, component };
   }
 
-  private buildAnswer(item: Item, key: string): AnswerSection {
+  private choicesChanged(unticked: string[]): void {
+    const what = unticked.length > 0 ? `, so ${unticked.join(", ")} is no longer ticked` : "";
+    new Notice(`Inbox: the agent revised the choices${what}.`);
+  }
+
+  private buildAnswer(item: Item, key: string, previous: AnswerSection | null): AnswerSection {
     const el = createDiv({ cls: "agents-inbox-answer-section" });
     const open = item.options.length === 0;
     const many = item.select === "many";
@@ -327,11 +352,14 @@ export class InboxItemView extends ItemView {
     });
     const submit = row.createEl("button", { cls: "agents-inbox-answer mod-cta", text: "Answer" });
 
+    const kept = previous?.picked().filter((option) => item.options.includes(option)) ?? [];
+    for (const input of inputs) input.checked = (many ? kept : kept.slice(0, 1)).includes(input.value);
+    if (previous?.open === open) note.value = previous.note();
+
+    const picked = () => inputs.filter((input) => input.checked).map((input) => input.value);
     const chosen = (): string | string[] | null => {
       if (open) return note.value.trim() || null;
-      const picked = inputs.filter((input) => input.checked).map((input) => input.value);
-      if (many) return picked.length > 0 ? picked : null;
-      return picked[0] ?? null;
+      return picked().length > 0 ? picked() : null;
     };
     const sync = () => {
       for (const input of inputs) input.disabled = this.busy;
@@ -344,7 +372,7 @@ export class InboxItemView extends ItemView {
       const answer = chosen();
       if (answer !== null) void this.answer(answer, open ? null : note.value.trim() || null);
     };
-    return { key, el, sync };
+    return { key, open, el, sync, picked, note: () => note.value };
   }
 
   private sync(): void {
@@ -388,7 +416,8 @@ export class InboxItemView extends ItemView {
     if (this.busy) return;
     this.setBusy(true);
     try {
-      await answerItem(this.absolute(), { answer, note, answered_by: "inbox" });
+      const { stale } = await answerItem(this.absolute(), { answer, note, answered_by: "inbox" });
+      if (stale) new Notice("Inbox: the choices changed before your answer arrived, so nothing was sent. Choose again.");
     } catch (error) {
       new Notice(`Inbox: ${(error as Error).message}`);
     } finally {

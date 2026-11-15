@@ -13,10 +13,18 @@ export type Answerer = (typeof ANSWERERS)[number];
 export type Select = (typeof SELECTS)[number];
 export type Author = (typeof AUTHORS)[number];
 
+export interface Revision {
+  select: Select;
+  added: string[];
+  removed: string[];
+  recommended: string[];
+}
+
 export interface Message {
   author: Author;
   at: string;
   text: string;
+  revision?: Revision;
 }
 
 export interface Item {
@@ -171,14 +179,29 @@ function checkThread(thread: unknown): void {
   (thread as unknown[]).forEach((message, index) => {
     const which = `message ${index + 1}`;
     check("thread", typeof message === "object" && message !== null && !Array.isArray(message), `${which} must be a mapping`);
-    const { author, at: time, text } = message as Record<string, unknown>;
+    const { author, at: time, text, revision } = message as Record<string, unknown>;
     check("thread", oneOf(author, AUTHORS), `${which} author must be one of ${AUTHORS.join(", ")}`);
     check("thread", isTimestamp(time), `${which} at must be an ISO 8601 timestamp`);
-    check("thread", typeof text === "string" && text.trim() !== "", `${which} text must not be empty`);
+    check("thread", typeof text === "string", `${which} text must be a string`);
+    if (revision === undefined) {
+      check("thread", (text as string).trim() !== "", `${which} text must not be empty`);
+    } else {
+      check("thread", author === "agent", `${which} revision must come from the agent`);
+      checkRevision(revision, which);
+    }
     const current = Date.parse(time as string);
     check("thread", current >= previous, `${which} at must not precede the message before it`);
     previous = current;
   });
+}
+
+function checkRevision(revision: unknown, which: string): void {
+  check("thread", typeof revision === "object" && revision !== null && !Array.isArray(revision), `${which} revision must be a mapping`);
+  const { select, added, removed, recommended } = revision as Record<string, unknown>;
+  check("thread", oneOf(select, SELECTS), `${which} revision select must be one of ${SELECTS.join(", ")}`);
+  for (const [name, list] of Object.entries({ added, removed, recommended })) {
+    check("thread", Array.isArray(list) && list.every((label) => typeof label === "string"), `${which} revision ${name} must be a list of labels`);
+  }
 }
 
 function isLabelList(value: unknown, options: string[]): boolean {

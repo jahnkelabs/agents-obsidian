@@ -3,7 +3,7 @@ import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, realpathSyn
 import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { type Answerer, type Item, type Message, parse, serialize, SLUG } from "./schema";
+import { type Answerer, type Item, type Message, parse, type Revision, SchemaError, type Select, serialize, SLUG, validate } from "./schema";
 
 export interface Answer {
   answer: string | string[];
@@ -66,44 +66,96 @@ export function createItem(docs: string, item: Item): string {
   }
 }
 
-export async function answerItem(path: string, answer: Answer): Promise<{ won: boolean; item: Item }> {
-  const lock = `${path}.lock`;
-  await acquireLock(lock);
-  try {
-    const item = readItem(path);
-    if (item.status === "answered") return { won: false, item };
-
-    const answered: Item = { ...item, ...answer, status: "answered", answered_at: new Date().toISOString() };
-    writeAtomic(path, serialize(answered));
-    return { won: true, item: answered };
-  } finally {
-    removeQuietly(lock);
-  }
+export interface ChoiceChange {
+  select?: Select;
+  options?: string[];
+  recommended?: string[];
+  open?: boolean;
+  note?: string;
 }
 
-export async function appendMessage(
-  path: string,
-  message: Omit<Message, "at">,
-): Promise<{ appended: boolean; item: Item }> {
-  const lock = `${path}.lock`;
-  await acquireLock(lock);
-  try {
-    const item = readItem(path);
+export function answerItem(path: string, answer: Answer): Promise<{ won: boolean; stale?: boolean; item: Item }> {
+  return withLock(path, (item) => {
+    if (item.status === "answered") return { won: false, item };
+
+    const given = answer.answer;
+    const value = Array.isArray(given) && item.select === "one" && given.length === 1 ? given[0] : given;
+    const answered: Item = { ...item, ...answer, answer: value, status: "answered", answered_at: new Date().toISOString() };
+    if (isRevised(item) && ((Array.isArray(given) && item.options.length === 0) || !fitsChoices(answered))) {
+      return { won: false, stale: true, item };
+    }
+    writeAtomic(path, serialize(answered));
+    return { won: true, item: answered };
+  });
+}
+
+export function appendMessage(path: string, message: Omit<Message, "at">): Promise<{ appended: boolean; item: Item }> {
+  return withLock(path, (item) => {
     if (item.status === "answered") return { appended: false, item };
 
-    const last = item.thread.at(-1);
-    const now = Date.now();
-    const at = last !== undefined && Date.parse(last.at) > now ? last.at : new Date(now).toISOString();
-    const appended: Item = { ...item, thread: [...item.thread, { author: message.author, text: message.text, at }] };
+    const appended: Item = { ...item, thread: [...item.thread, { author: message.author, text: message.text, at: stamp(item) }] };
     writeAtomic(path, serialize(appended));
     return { appended: true, item: appended };
-  } finally {
-    removeQuietly(lock);
-  }
+  });
+}
+
+export function reviseChoices(path: string, change: ChoiceChange): Promise<{ revised: boolean; item: Item }> {
+  return withLock(path, (item) => {
+    if (item.status === "answered") return { revised: false, item };
+
+    const select = change.open ? "one" : (change.select ?? item.select);
+    const options = change.open ? [] : (change.options ?? item.options);
+    const recommended = change.open ? [] : (change.recommended ?? [item.recommended ?? []].flat().filter((label) => options.includes(label)));
+    const revision: Revision = {
+      select,
+      added: options.filter((label) => !item.options.includes(label)),
+      removed: item.options.filter((label) => !options.includes(label)),
+      recommended,
+    };
+    const revised: Item = {
+      ...item,
+      select,
+      options,
+      recommended: recommended.length === 0 ? null : select === "one" && recommended.length === 1 ? recommended[0] : recommended,
+      thread: [...item.thread, { author: "agent", at: stamp(item), text: change.note ?? "", revision }],
+    };
+    writeAtomic(path, serialize(revised));
+    return { revised: true, item: revised };
+  });
 }
 
 export function answerOf(item: Item) {
   return { answer: item.answer, note: item.note, answered_by: item.answered_by };
+}
+
+async function withLock<T>(path: string, change: (item: Item) => T): Promise<T> {
+  const lock = `${path}.lock`;
+  await acquireLock(lock);
+  try {
+    return change(readItem(path));
+  } finally {
+    removeQuietly(lock);
+  }
+}
+
+function stamp(item: Item): string {
+  const last = item.thread.at(-1);
+  const now = Date.now();
+  return last !== undefined && Date.parse(last.at) > now ? last.at : new Date(now).toISOString();
+}
+
+function isRevised(item: Item): boolean {
+  return item.thread.some((message) => message.revision !== undefined);
+}
+
+function fitsChoices(item: Item): boolean {
+  try {
+    validate(item);
+    return true;
+  } catch (error) {
+    if (error instanceof SchemaError && error.field === "answer") return false;
+    throw error;
+  }
 }
 
 function assertInside(docs: string, path: string): void {
