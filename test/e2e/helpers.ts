@@ -8,6 +8,7 @@ import { type Answerer, type Item, parse, serialize } from "../../src/schema";
 
 export const VIEW_TYPE = "agents-inbox";
 export const ITEM_VIEW_TYPE = "agents-inbox-item";
+export const DOC_VIEW_TYPE = "agents-inbox-doc";
 
 export const ROOT_QUESTION = "inbox/root-question.md";
 export const ROOT_THREAD = "inbox/root-thread.md";
@@ -17,11 +18,17 @@ export const M1_ANSWERED = "maps/m1/inbox/m1-answered.md";
 export const M1_C2 = "maps/m1/inbox/m1-c2.md";
 export const M2_OPEN_QUESTION = "maps/m2/inbox/m2-open-question.md";
 export const M2_PICK_MANY = "maps/m2/inbox/m2-pick-many.md";
+export const M1_MAP = "maps/m1/map.md";
+export const C1_REQUIREMENTS = "maps/m1/c1/requirements.md";
+export const C1_DESIGN = "maps/m1/c1/design.md";
+export const C1_IMPLEMENTATION = "maps/m1/c1/implementation.md";
 export const FIXTURES = [ROOT_QUESTION, ROOT_THREAD, M1_EARLIER, M1_NEWER, M1_ANSWERED, M1_C2, M2_OPEN_QUESTION, M2_PICK_MANY];
 
 const CLI = join(import.meta.dirname, "..", "..", "dist", "inbox.js");
 const SIDEBAR = `.workspace-leaf-content[data-type="${VIEW_TYPE}"]`;
 const TABS = `.workspace-leaf-content[data-type="${ITEM_VIEW_TYPE}"]`;
+const DOCS = `.workspace-leaf-content[data-type="${DOC_VIEW_TYPE}"]`;
+const AIDS = ".agents-inbox-concerns, .agents-inbox-outline, .agents-inbox-steps, tr.is-cited, tr.is-item";
 const CLOSING_FENCE = "\n---\n";
 
 export interface Result {
@@ -197,6 +204,7 @@ export async function closeInbox(): Promise<void> {
   await browser.executeObsidian(({ app }, types) => types.forEach((type) => app.workspace.detachLeavesOfType(type)), [
     VIEW_TYPE,
     ITEM_VIEW_TYPE,
+    DOC_VIEW_TYPE,
   ]);
 }
 
@@ -259,7 +267,7 @@ export async function openInbox(): Promise<void> {
   });
 }
 
-async function dismissNotices(): Promise<void> {
+export async function dismissNotices(): Promise<void> {
   await browser.execute(() => document.querySelectorAll(".notice").forEach((notice) => notice.remove()));
 }
 
@@ -497,4 +505,228 @@ export async function savedSidebar(): Promise<unknown> {
 export async function pluginDataFile(): Promise<string> {
   const dir = await browser.executeObsidian(({ plugins }) => plugins.agents.manifest.dir as string);
   return join(vault(), dir, "data.json");
+}
+
+export type DocKind = "map" | "requirements" | "design" | "implementation";
+
+export interface Context {
+  where: string | null;
+  links: string[];
+}
+
+export function contextOf(id: string): Promise<Context | null> {
+  return browser.execute((target) => {
+    const bar = document.querySelector<HTMLElement>(`${target} .agents-inbox-context`);
+    if (bar === null) return null;
+    return {
+      where: bar.querySelector(".agents-inbox-context-where")?.textContent ?? null,
+      links: [...bar.querySelectorAll<HTMLElement>(".agents-inbox-context-link")].map((el) => el.textContent ?? ""),
+    };
+  }, `${TABS} .agents-inbox-item[data-id="${id}"]`);
+}
+
+export async function waitForContext(id: string, expected: Context | null): Promise<void> {
+  const ordered = (context: Context | null) => JSON.stringify(context && { where: context.where, links: context.links });
+  const want = ordered(expected);
+  let seen = "";
+  try {
+    await browser.waitUntil(async () => {
+      seen = ordered(await contextOf(id));
+      return seen === want;
+    });
+  } catch {
+    throw new Error(`the context bar of ${id} never read ${want}; last ${seen}`);
+  }
+}
+
+export async function clickContext(id: string, kind: DocKind): Promise<void> {
+  await tab(id).$(`.agents-inbox-context-link[data-kind="${kind}"]`).click();
+}
+
+export function citation(id: string, href: string) {
+  return tab(id).$(`a.internal-link[data-href="${href}"]`);
+}
+
+export function docView() {
+  return $(`${DOCS} .agents-inbox-doc`);
+}
+
+export async function waitForDoc(path: string): Promise<void> {
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        (target, want) => document.querySelector<HTMLElement>(target)?.dataset.path === want,
+        `${DOCS} .agents-inbox-doc`,
+        path,
+      ),
+    { timeoutMsg: `the split never showed ${path}` },
+  );
+}
+
+export function splitState(): Promise<{ docs: { path: unknown; itemPath: unknown }[]; beside: boolean }> {
+  return browser.executeObsidian(
+    ({ app }, docType, itemType) => {
+      type Node = { parent?: Node; direction?: string };
+      const docs = app.workspace.getLeavesOfType(docType);
+      const items = app.workspace.getLeavesOfType(itemType);
+      const beside = docs.every((doc) =>
+        items.some((item) => {
+          const docNode = doc as unknown as Node;
+          const itemNode = item as unknown as Node;
+          const split = docNode.parent?.parent;
+          return (
+            doc.getRoot() === app.workspace.rootSplit &&
+            docNode.parent !== itemNode.parent &&
+            split !== undefined &&
+            split === itemNode.parent?.parent &&
+            split.direction === "vertical"
+          );
+        }),
+      );
+      return {
+        docs: docs.map((leaf) => {
+          const state = leaf.getViewState().state ?? {};
+          return { path: state.path, itemPath: state.itemPath };
+        }),
+        beside,
+      };
+    },
+    DOC_VIEW_TYPE,
+    ITEM_VIEW_TYPE,
+  );
+}
+
+export async function markDocLeaf(): Promise<void> {
+  await browser.execute((target) => {
+    const leaf = document.querySelector(target)?.closest<HTMLElement>(".workspace-leaf");
+    if (leaf) leaf.dataset.agentsE2e = "kept";
+  }, DOCS);
+}
+
+export function docLeafKept(): Promise<boolean> {
+  return browser.execute((target) => document.querySelector(target)?.closest<HTMLElement>(".workspace-leaf")?.dataset.agentsE2e === "kept", DOCS);
+}
+
+export function docScroll(heading: string): Promise<{ scrollTop: number; offset: number | null }> {
+  return browser.execute(
+    (target, text) => {
+      const scroller = document.querySelector<HTMLElement>(`${target} .agents-inbox-doc-scroll`);
+      if (scroller === null) return { scrollTop: -1, offset: null };
+      const found = [...scroller.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")].find((el) => el.textContent?.trim() === text);
+      return {
+        scrollTop: scroller.scrollTop,
+        offset: found === undefined ? null : found.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
+      };
+    },
+    DOCS,
+    heading,
+  );
+}
+
+export async function waitForHeadingAtTop(heading: string): Promise<void> {
+  let seen = "";
+  await browser.waitUntil(
+    async () => {
+      const { scrollTop, offset } = await docScroll(heading);
+      seen = JSON.stringify({ scrollTop, offset });
+      return scrollTop > 0 && offset !== null && Math.abs(offset) < 2;
+    },
+    { timeoutMsg: `the split never scrolled to ${heading}; last ${seen}` },
+  );
+}
+
+export async function hoverPreview(text: string): Promise<void> {
+  await browser.waitUntil(
+    async () => (await $$(".popover.hover-popover").map((popover) => popover.getText())).some((shown) => shown.includes(text)),
+    { timeoutMsg: `no hover preview showed ${text}` },
+  );
+}
+
+export function concernRows(): Promise<{ concern: string; item: boolean; cells: string[] }[]> {
+  return browser.execute(
+    (target) =>
+      [...document.querySelectorAll<HTMLElement>(`${target} .agents-inbox-concerns tbody tr`)].map((tr) => ({
+        concern: tr.dataset.concern ?? "",
+        item: tr.classList.contains("is-item"),
+        cells: [...tr.querySelectorAll("td")].map((td) => td.textContent ?? ""),
+      })),
+    DOCS,
+  );
+}
+
+export function citedRows(): Promise<string[]> {
+  return browser.execute(
+    (target) => [...document.querySelectorAll<HTMLElement>(`${target} tr.is-cited`)].map((tr) => tr.querySelector("td")?.textContent ?? ""),
+    DOCS,
+  );
+}
+
+export function outlineEntries(): Promise<string[]> {
+  return browser.execute(
+    (target) => [...document.querySelectorAll<HTMLElement>(`${target} .agents-inbox-outline-entry`)].map((el) => el.textContent ?? ""),
+    DOCS,
+  );
+}
+
+export async function clickOutline(heading: string): Promise<void> {
+  const entry = await $$(`${DOCS} .agents-inbox-outline-entry`).find(async (el) => (await el.getText()) === heading);
+  if (entry === undefined) throw new Error(`no outline entry reads ${heading}`);
+  await entry.click();
+}
+
+export function steps(): Promise<{ step: string; done: boolean; current: boolean }[]> {
+  return browser.execute(
+    (target) =>
+      [...document.querySelectorAll<HTMLElement>(`${target} .agents-inbox-step`)].map((el) => ({
+        step: el.textContent ?? "",
+        done: el.classList.contains("is-done"),
+        current: el.classList.contains("is-current"),
+      })),
+    DOCS,
+  );
+}
+
+export function aidsInSplit(): Promise<number> {
+  return browser.execute((target, aids) => document.querySelectorAll(`${target} :is(${aids})`).length, DOCS, AIDS);
+}
+
+export async function closeMarkdownTabs(): Promise<void> {
+  await browser.executeObsidian(({ app }) => app.workspace.detachLeavesOfType("markdown"));
+}
+
+export function markdownTabs(): Promise<string[]> {
+  return browser.executeObsidian(({ app, obsidian }) =>
+    app.workspace
+      .getLeavesOfType("markdown")
+      .flatMap((leaf) => (leaf.view instanceof obsidian.MarkdownView && leaf.view.file !== null ? [leaf.view.file.path] : []))
+      .sort(),
+  );
+}
+
+export async function openOutsideSplit(path: string, mode: "preview" | "source", shows: string): Promise<void> {
+  await closeMarkdownTabs();
+  await browser.executeObsidian(
+    async ({ app }, file, viewMode) => {
+      const leaf = app.workspace.getLeaf("tab");
+      await leaf.setViewState({ type: "markdown", state: { file, mode: viewMode }, active: true });
+    },
+    path,
+    mode,
+  );
+  await browser.waitUntil(
+    () =>
+      browser.execute(
+        (text) =>
+          [...document.querySelectorAll<HTMLElement>('.workspace-leaf-content[data-type="markdown"]')].some((el) => el.innerText.includes(text)),
+        shows,
+      ),
+    { timeoutMsg: `${path} never rendered in ${mode} mode` },
+  );
+}
+
+export function aidsOutsideSplit(): Promise<number> {
+  return browser.execute(
+    (aids) => document.querySelectorAll(`.workspace-leaf-content[data-type="markdown"] :is(${aids})`).length,
+    AIDS,
+  );
 }

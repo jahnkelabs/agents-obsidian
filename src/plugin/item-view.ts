@@ -1,6 +1,8 @@
 import { basename, join } from "node:path";
 import {
   Component,
+  type HoverParent,
+  type HoverPopover,
   ItemView,
   MarkdownRenderer,
   Notice,
@@ -13,6 +15,8 @@ import {
 } from "obsidian";
 import { type Item, labelsOf, type Message } from "../schema";
 import { answerItem, appendMessage, readItem } from "../store";
+import { type Citation, contextDocs } from "./context";
+import { handleLinks } from "./doc-view";
 import { age, answerText, title } from "./inbox";
 import type AgentsPlugin from "./main";
 import { place, REFRESH_DELAY_MS } from "./dom";
@@ -46,8 +50,9 @@ function ago(at: string): string {
   return span === "now" ? "just now" : `${span} ago`;
 }
 
-export class InboxItemView extends ItemView {
+export class InboxItemView extends ItemView implements HoverParent {
   path = "";
+  hoverPopover: HoverPopover | null = null;
   private item: Item | null = null;
   private busy = false;
   private closed = false;
@@ -56,6 +61,8 @@ export class InboxItemView extends ItemView {
 
   private readonly mainEl = createDiv({ cls: "agents-inbox-item-main" });
   private readonly dockEl = createDiv({ cls: "agents-inbox-dock" });
+  private readonly contextEl = createDiv({ cls: "agents-inbox-context" });
+  private contextKey: string | null = null;
   private readonly metaEl = createDiv({ cls: "agents-inbox-item-meta" });
   private readonly bodyEl = createDiv({ cls: "agents-inbox-body markdown-rendered" });
   private body: RenderedBody | null = null;
@@ -136,6 +143,14 @@ export class InboxItemView extends ItemView {
       }),
     );
     this.registerDomEvent(document, "visibilitychange", () => this.see());
+    for (const el of [this.bodyEl, this.threadEl]) {
+      handleLinks(
+        this,
+        el,
+        () => this.path,
+        (linktext, citation) => this.openCitation(linktext, citation),
+      );
+    }
   }
 
   async onClose(): Promise<void> {
@@ -192,6 +207,7 @@ export class InboxItemView extends ItemView {
     const awaiting = item.status === "awaiting-you";
     this.contentEl.dataset.status = item.status;
     this.renderMeta(item);
+    this.renderContext();
 
     if (awaiting) {
       this.statusEl.empty();
@@ -216,6 +232,7 @@ export class InboxItemView extends ItemView {
     this.composeEl.toggleClass("is-draft", !awaiting);
     place(this.composeEl, awaiting ? [this.composer, this.hint, this.send] : [this.composer, this.copyDraft]);
     place(this.mainEl, [
+      ...(item.map !== null ? [this.contextEl] : []),
       this.metaEl,
       this.bodyEl,
       this.threadEl,
@@ -245,6 +262,62 @@ export class InboxItemView extends ItemView {
       this.metaEl.createSpan({ cls: "agents-inbox-sep", text: "·", attr: { "aria-hidden": "true" } });
       this.metaEl.createSpan({ text: part });
     }
+  }
+
+  renderContext(): void {
+    const item = this.item;
+    if (item === null || item.map === null) {
+      this.contextEl.empty();
+      this.contextKey = null;
+      return;
+    }
+    const docs = contextDocs(item.map, item.concern, (vaultPath) => this.app.vault.getFileByPath(vaultPath) !== null);
+    const open = this.plugin.contextPath(this.leaf);
+    const key = JSON.stringify([item.map, item.concern, docs.map((doc) => doc.vaultPath), open]);
+    if (key === this.contextKey) return;
+    this.contextKey = key;
+    this.contextEl.empty();
+    this.contextEl.createSpan({ cls: "agents-inbox-context-where", text: item.concern === null ? item.map : `${item.map} / ${item.concern}` });
+    for (const doc of docs) {
+      this.contextEl.createSpan({ cls: "agents-inbox-sep", text: "·", attr: { "aria-hidden": "true" } });
+      const isOpen = doc.vaultPath === open;
+      const link = this.contextEl.createEl("a", {
+        cls: "agents-inbox-context-link",
+        text: isOpen ? `${doc.label} · open` : doc.label,
+        attr: { role: "link", tabindex: "0" },
+      });
+      link.dataset.kind = doc.kind;
+      link.dataset.path = doc.vaultPath;
+      link.toggleClass("is-open", isOpen);
+      if (isOpen) link.setAttr("aria-current", "page");
+      const go = () => this.openDoc({ path: doc.vaultPath, subpath: null, row: null });
+      link.onclick = (event) => {
+        event.preventDefault();
+        go();
+      };
+      link.onkeydown = (event) => {
+        if (event.key === "Enter") go();
+      };
+    }
+  }
+
+  private openCitation(linktext: string, citation: Citation | null): void {
+    if (citation === null) {
+      new Notice(`Inbox: no document for ${linktext}`);
+      return;
+    }
+    const map = this.item?.map ?? null;
+    if (map !== null && citation.vaultPath.startsWith(`maps/${map}/`) && citation.vaultPath.endsWith(".md")) {
+      this.openDoc({ path: citation.vaultPath, subpath: citation.subpath, row: citation.row });
+    } else {
+      void this.app.workspace.openLinkText(linktext, this.path, "tab");
+    }
+  }
+
+  private openDoc(target: { path: string; subpath: string | null; row: number | null }): void {
+    this.plugin.openContext(this.leaf, target).catch((error) => {
+      new Notice(`Inbox: ${(error as Error).message}`);
+    });
   }
 
   private showAnswered(item: Item): void {
