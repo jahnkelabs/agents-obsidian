@@ -3,18 +3,22 @@ import { join } from "node:path";
 import { expect } from "@wdio/globals";
 import {
   ask,
-  card,
-  cardIds,
+  composer,
+  composerState,
   inbox,
   itemAt,
   M1_EARLIER,
   M2_OPEN_QUESTION,
-  markNote,
+  markComposer,
   markWindow,
-  noteState,
   openInbox,
+  openItem,
   panel,
+  reply,
   reset,
+  row,
+  rowIds,
+  tab,
   vault,
   windowKept,
 } from "./helpers";
@@ -29,7 +33,7 @@ describe("live updates", () => {
     const result = inbox(["answer", "m1-earlier", "--option", "approve", "--by", "chat"]);
     expect(result.status).toBe(0);
 
-    await card("m1-earlier").waitForExist({ reverse: true });
+    await row("m1-earlier").waitForExist({ reverse: true });
     expect(await windowKept()).toBe(true);
     expect(itemAt(M1_EARLIER).answered_by).toBe("chat");
   });
@@ -40,7 +44,7 @@ describe("live updates", () => {
 
     rmSync(join(vault(), M1_EARLIER));
 
-    await card("m1-earlier").waitForExist({ reverse: true });
+    await row("m1-earlier").waitForExist({ reverse: true });
     expect(await windowKept()).toBe(true);
   });
 
@@ -50,7 +54,7 @@ describe("live updates", () => {
 
     renameSync(join(vault(), M2_OPEN_QUESTION), join(vault(), "maps/m2/m2-open-question.md"));
 
-    await card("m2-open-question").waitForExist({ reverse: true });
+    await row("m2-open-question").waitForExist({ reverse: true });
     expect(await windowKept()).toBe(true);
   });
 
@@ -60,7 +64,7 @@ describe("live updates", () => {
 
     const id = ask(["--map", "m1", "--concern", "c2", "--option", "one", "--option", "two"], "**Deciding — Live map item**\n\nfound: new\n");
 
-    await card(id).waitForExist();
+    await row(id).waitForExist();
     await expect(panel().$('.agents-inbox-group[data-map="m1"][data-concern="c2"]').$(`[data-id="${id}"]`)).toExist();
     expect(await windowKept()).toBe(true);
   });
@@ -71,21 +75,23 @@ describe("live updates", () => {
 
     const id = ask([], "**Deciding — Live root item**\n\nfound: new\n");
 
-    await card(id).waitForExist();
+    await row(id).waitForExist();
     await expect(panel().$('.agents-inbox-group[data-map=""]').$(`[data-id="${id}"]`)).toExist();
     expect(await windowKept()).toBe(true);
   });
 
-  it("keeps a note's focus and text while another item arrives", async () => {
-    await openInbox();
-    await card("m1-newer").$("textarea.agents-inbox-note").setValue("half a thought");
-    await markNote("m1-newer");
-    expect(await noteState("m1-newer")).toEqual({ kept: true, focused: true, value: "half a thought" });
+  it("keeps the composer's focus and text while a reply and another item arrive", async () => {
+    await openItem("m1-newer");
+    await composer("m1-newer").setValue("half a thought");
+    await markComposer("m1-newer");
+    expect(await composerState("m1-newer")).toEqual({ kept: true, focused: true, value: "half a thought" });
 
+    reply("m1-newer", "An agent reply\n");
+    await tab("m1-newer").$('.agents-inbox-message[data-author="agent"]').waitForExist();
     const id = ask(["--map", "m1", "--concern", "c1", "--option", "one"], "**Deciding — Arrives meanwhile**\n\nfound: new\n");
+    await row(id).waitForExist();
 
-    await card(id).waitForExist();
-    expect((await cardIds()).slice(0, 2)).toEqual([id, "m1-newer"]);
-    expect(await noteState("m1-newer")).toEqual({ kept: true, focused: true, value: "half a thought" });
+    expect((await rowIds()).slice(0, 2)).toEqual([id, "m1-newer"]);
+    expect(await composerState("m1-newer")).toEqual({ kept: true, focused: true, value: "half a thought" });
   });
 });

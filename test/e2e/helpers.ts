@@ -1,21 +1,28 @@
 import { spawn, spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
-import { $, browser } from "@wdio/globals";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, relative, sep } from "node:path";
+import { $, $$, browser, expect } from "@wdio/globals";
 import { obsidianPage } from "wdio-obsidian-service";
 import { type Answerer, type Item, parse, serialize } from "../../src/schema";
 
 export const VIEW_TYPE = "agents-inbox";
+export const ITEM_VIEW_TYPE = "agents-inbox-item";
 
 export const ROOT_QUESTION = "inbox/root-question.md";
+export const ROOT_THREAD = "inbox/root-thread.md";
 export const M1_EARLIER = "maps/m1/inbox/m1-earlier.md";
 export const M1_NEWER = "maps/m1/inbox/m1-newer.md";
 export const M1_ANSWERED = "maps/m1/inbox/m1-answered.md";
 export const M1_C2 = "maps/m1/inbox/m1-c2.md";
 export const M2_OPEN_QUESTION = "maps/m2/inbox/m2-open-question.md";
-export const FIXTURES = [ROOT_QUESTION, M1_EARLIER, M1_NEWER, M1_ANSWERED, M1_C2, M2_OPEN_QUESTION];
+export const M2_PICK_MANY = "maps/m2/inbox/m2-pick-many.md";
+export const FIXTURES = [ROOT_QUESTION, ROOT_THREAD, M1_EARLIER, M1_NEWER, M1_ANSWERED, M1_C2, M2_OPEN_QUESTION, M2_PICK_MANY];
 
 const CLI = join(import.meta.dirname, "..", "..", "dist", "inbox.js");
+const SIDEBAR = `.workspace-leaf-content[data-type="${VIEW_TYPE}"]`;
+const TABS = `.workspace-leaf-content[data-type="${ITEM_VIEW_TYPE}"]`;
+const CLOSING_FENCE = "\n---\n";
 
 export interface Result {
   status: number | null;
@@ -59,8 +66,53 @@ export function ask(args: string[], body: string): string {
   return result.stdout.trim();
 }
 
+export function reply(id: string, text: string): void {
+  const result = inbox(["reply", id], text);
+  if (result.status !== 0) throw new Error(`inbox reply failed: ${result.stderr}`);
+}
+
+export function revise(id: string, args: string[]): void {
+  const result = inbox(["revise", id, ...args]);
+  if (result.status !== 0) throw new Error(`inbox revise failed: ${result.stderr}`);
+}
+
+export function revisedText(rel: string, args: string[]): string {
+  const docs = mkdtempSync(join(tmpdir(), "inbox-e2e-"));
+  try {
+    const copy = join(docs, "inbox", basename(rel));
+    mkdirSync(dirname(copy));
+    writeFileSync(copy, readBytes(rel));
+    const result = spawnSync("node", [CLI, "revise", basename(rel, ".md"), ...args], {
+      env: { ...process.env, INBOX_DOCS_DIR: docs },
+      encoding: "utf8",
+    });
+    if (result.status !== 0) throw new Error(`inbox revise failed: ${result.stderr}`);
+    return readFileSync(copy, "utf8");
+  } finally {
+    rmSync(docs, { recursive: true, force: true });
+  }
+}
+
+export function writeUnderLock(rel: string, text: string): void {
+  const path = join(vault(), rel);
+  const tmp = join(dirname(path), `.e2e-${process.pid}.tmp`);
+  writeFileSync(tmp, text);
+  renameSync(tmp, path);
+}
+
+export async function waitForNotice(pattern: RegExp): Promise<void> {
+  await browser.waitUntil(async () => (await $$(".notice").map((notice) => notice.getText())).some((text) => pattern.test(text)), {
+    timeoutMsg: `no notice matched ${pattern}`,
+  });
+}
+
 export function readBytes(rel: string): Buffer {
   return readFileSync(join(vault(), rel));
+}
+
+export function bodyBytes(rel: string): Buffer {
+  const bytes = readBytes(rel);
+  return bytes.subarray(bytes.indexOf(CLOSING_FENCE, 3) + CLOSING_FENCE.length);
 }
 
 export function itemAt(rel: string): Item {
@@ -92,21 +144,18 @@ function answeredText(rel: string, answer: string, answered_by: Answerer): strin
 }
 
 export function answerUnderLock(rel: string, answer: string, answered_by: Answerer): void {
-  const path = join(vault(), rel);
-  const tmp = join(dirname(path), `.e2e-${process.pid}.tmp`);
-  writeFileSync(tmp, answeredText(rel, answer, answered_by));
-  renameSync(tmp, path);
+  writeUnderLock(rel, answeredText(rel, answer, answered_by));
 }
 
 export function rewrittenText(rel: string, changes: Partial<Item>): string {
   return serialize({ ...itemAt(rel), ...changes });
 }
 
-export async function chatAnswersThenPanelClicks(
+export async function chatAnswersThenTabClicks(
   rel: string,
   answer: string,
   id: string,
-  option: string,
+  button: string,
   before: Record<string, string> = {},
 ): Promise<{ clicked: boolean; text: string }> {
   const path = join(vault(), rel);
@@ -114,23 +163,19 @@ export async function chatAnswersThenPanelClicks(
   const text = answeredText(rel, answer, "chat");
   const others = Object.entries(before).map(([other, content]): [string, string] => [join(vault(), other), content]);
   const clicked = await browser.executeObsidian(
-    (_obsidian, file, temp, content, type, cardId, choice, writes) => {
+    (_obsidian, file, temp, content, selector, writes) => {
       const fs = require("fs");
       for (const [other, otherContent] of writes) fs.writeFileSync(other, otherContent);
       fs.writeFileSync(temp, content);
       fs.renameSync(temp, file);
-      const button = document.querySelector<HTMLButtonElement>(
-        `.workspace-leaf-content[data-type="${type}"] .agents-inbox-card[data-id="${cardId}"] button[data-option="${choice}"]`,
-      );
-      button?.click();
-      return button !== null;
+      const target = document.querySelector<HTMLButtonElement>(selector);
+      target?.click();
+      return target !== null;
     },
     path,
     tmp,
     text,
-    VIEW_TYPE,
-    id,
-    option,
+    `${TABS} .agents-inbox-item[data-id="${id}"] ${button}`,
     others,
   );
   return { clicked, text };
@@ -149,7 +194,10 @@ export async function waitForObsidianToSee(rel: string, answered_by: Answerer): 
 }
 
 export async function closeInbox(): Promise<void> {
-  await browser.executeObsidian(({ app }, type) => app.workspace.detachLeavesOfType(type), VIEW_TYPE);
+  await browser.executeObsidian(({ app }, types) => types.forEach((type) => app.workspace.detachLeavesOfType(type)), [
+    VIEW_TYPE,
+    ITEM_VIEW_TYPE,
+  ]);
 }
 
 export async function reset(): Promise<void> {
@@ -158,26 +206,65 @@ export async function reset(): Promise<void> {
 }
 
 export function panel() {
-  return $(`.workspace-leaf-content[data-type="${VIEW_TYPE}"]`);
+  return $(SIDEBAR);
 }
 
-export function card(id: string) {
-  return panel().$(`.agents-inbox-card[data-id="${id}"]`);
+export function list() {
+  return $(`${SIDEBAR} .agents-inbox`);
+}
+
+export function row(id: string) {
+  return $(`${SIDEBAR} .agents-inbox-row[data-id="${id}"]`);
+}
+
+export function unreadMark(id: string) {
+  return $(`${SIDEBAR} .agents-inbox-row[data-id="${id}"] .agents-inbox-unread`);
+}
+
+export function tab(id: string) {
+  return $(`${TABS} .agents-inbox-item[data-id="${id}"]`);
+}
+
+export function composer(id: string) {
+  return tab(id).$("textarea.agents-inbox-composer");
+}
+
+export function answerButton(id: string) {
+  return tab(id).$("button.agents-inbox-answer");
+}
+
+export async function choose(id: string, option: string): Promise<void> {
+  await tab(id).$(`.agents-inbox-choice[data-option="${option}"] input`).click();
 }
 
 export async function openInbox(): Promise<void> {
   await browser.executeObsidianCommand("agents:open-inbox");
-  await browser.waitUntil(async () => (await panel().$$(".agents-inbox-card, .agents-inbox-empty").length) > 0, {
+  await browser.waitUntil(async () => (await panel().$$(".agents-inbox-row, .agents-inbox-empty").length) > 0, {
     timeoutMsg: "the inbox panel never rendered",
   });
-  await browser.waitUntil(async () => (await panel().isDisplayed()) && (await panelSettled()), {
+  await browser.waitUntil(async () => (await panel().isDisplayed()) && (await settled(SIDEBAR)), {
     timeoutMsg: "the inbox panel never settled",
   });
 }
 
-function panelSettled(): Promise<boolean> {
-  return browser.execute(async (type) => {
-    const el = document.querySelector<HTMLElement>(`.workspace-leaf-content[data-type="${type}"]`);
+async function dismissNotices(): Promise<void> {
+  await browser.execute(() => document.querySelectorAll(".notice").forEach((notice) => notice.remove()));
+}
+
+export async function openItem(id: string): Promise<void> {
+  await openInbox();
+  await dismissNotices();
+  await row(id).click();
+  const selector = `${TABS} .agents-inbox-item[data-id="${id}"]`;
+  await browser.waitUntil(
+    async () => (await tab(id).isDisplayed()) && (await tab(id).$$(".agents-inbox-body > *").length) > 0 && (await settled(selector)),
+    { timeoutMsg: `the tab for ${id} never settled` },
+  );
+}
+
+function settled(selector: string): Promise<boolean> {
+  return browser.execute(async (target) => {
+    const el = document.querySelector<HTMLElement>(target);
     if (!el) return false;
     const rect = () => {
       const { x, y, width, height } = el.getBoundingClientRect();
@@ -186,53 +273,85 @@ function panelSettled(): Promise<boolean> {
     const frame = () => new Promise<string>((resolve) => requestAnimationFrame(() => resolve(rect())));
     const first = rect();
     return (await frame()) === first && (await frame()) === first;
-  }, VIEW_TYPE);
+  }, selector);
 }
 
-export function cardIds(): Promise<string[]> {
+export function itemTabs(): Promise<{ paths: string[]; active: string | null; inRoot: boolean }> {
+  return browser.executeObsidian(({ app }, type) => {
+    const leaves = app.workspace.getLeavesOfType(type);
+    const pathOf = (state: Record<string, unknown> | undefined) => (typeof state?.path === "string" ? state.path : null);
+    return {
+      paths: leaves.flatMap((leaf) => pathOf(leaf.getViewState().state) ?? []).sort(),
+      active: pathOf(app.workspace.getMostRecentLeaf(app.workspace.rootSplit)?.getViewState().state),
+      inRoot: leaves.every((leaf) => leaf.getRoot() === app.workspace.rootSplit),
+    };
+  }, ITEM_VIEW_TYPE);
+}
+
+export async function seenPaths(): Promise<string[]> {
+  return await browser.executeObsidian(async ({ plugins }) => Object.keys(((await plugins.agents.loadData()) ?? {}).seen ?? {}));
+}
+
+export function rowIds(): Promise<string[]> {
   return browser.execute(
-    (type) =>
-      [...document.querySelectorAll<HTMLElement>(`.workspace-leaf-content[data-type="${type}"] .agents-inbox-card[data-id]`)].map(
-        (el) => el.dataset.id ?? "",
-      ),
-    VIEW_TYPE,
+    (sidebar) => [...document.querySelectorAll<HTMLElement>(`${sidebar} .agents-inbox-row[data-id]`)].map((el) => el.dataset.id ?? ""),
+    SIDEBAR,
   );
 }
 
 export function groupTitles(): Promise<string[]> {
   return browser.execute(
-    (type) =>
-      [...document.querySelectorAll<HTMLElement>(`.workspace-leaf-content[data-type="${type}"] .agents-inbox-group-title`)].map(
-        (el) => el.textContent ?? "",
-      ),
-    VIEW_TYPE,
+    (sidebar) => [...document.querySelectorAll<HTMLElement>(`${sidebar} .agents-inbox-group-title`)].map((el) => el.textContent ?? ""),
+    SIDEBAR,
   );
 }
 
-export function cardGroups(): Promise<{ id: string; group: string }[]> {
+export function rowGroups(): Promise<{ id: string; group: string }[]> {
   return browser.execute(
-    (type) =>
-      [...document.querySelectorAll<HTMLElement>(`.workspace-leaf-content[data-type="${type}"] .agents-inbox-card[data-id]`)].map(
-        (el) => ({
-          id: el.dataset.id ?? "",
-          group: el.closest(".agents-inbox-group")?.querySelector(".agents-inbox-group-title")?.textContent ?? "",
-        }),
-      ),
-    VIEW_TYPE,
+    (sidebar) =>
+      [...document.querySelectorAll<HTMLElement>(`${sidebar} .agents-inbox-row[data-id]`)].map((el) => ({
+        id: el.dataset.id ?? "",
+        group: el.closest(".agents-inbox-group")?.querySelector(".agents-inbox-group-title")?.textContent ?? "",
+      })),
+    SIDEBAR,
   );
 }
 
-export function optionsOf(id: string): Promise<{ option: string; recommended: boolean }[]> {
+export function choicesOf(id: string): Promise<{ option: string; type: string; recommended: boolean }[]> {
   return browser.execute(
-    (type, cardId) =>
-      [
-        ...document.querySelectorAll<HTMLElement>(
-          `.workspace-leaf-content[data-type="${type}"] .agents-inbox-card[data-id="${cardId}"] .agents-inbox-option`,
-        ),
-      ].map((el) => ({ option: el.dataset.option ?? "", recommended: el.classList.contains("is-recommended") })),
-    VIEW_TYPE,
-    id,
+    (target) =>
+      [...document.querySelectorAll<HTMLElement>(`${target} .agents-inbox-choice`)].map((el) => ({
+        option: el.dataset.option ?? "",
+        type: el.querySelector("input")?.type ?? "",
+        recommended: el.classList.contains("is-recommended"),
+      })),
+    `${TABS} .agents-inbox-item[data-id="${id}"]`,
   );
+}
+
+export function checkedOf(id: string): Promise<string[]> {
+  return browser.execute(
+    (target) => [...document.querySelectorAll<HTMLInputElement>(`${target} .agents-inbox-choice input:checked`)].map((input) => input.value),
+    `${TABS} .agents-inbox-item[data-id="${id}"]`,
+  );
+}
+
+export function authorsOf(id: string): Promise<string[]> {
+  return browser.execute(
+    (target) => [...document.querySelectorAll<HTMLElement>(`${target} .agents-inbox-message`)].map((el) => el.dataset.author ?? ""),
+    `${TABS} .agents-inbox-item[data-id="${id}"]`,
+  );
+}
+
+export const ANSWERING_CONTROLS =
+  "button.agents-inbox-send, button.agents-inbox-answer, .agents-inbox-choice input, textarea.agents-inbox-note, textarea.agents-inbox-composer:not([readonly])";
+
+export async function expectNoAnsweringControls(el: ReturnType<typeof $>): Promise<void> {
+  await expect(el.$$(ANSWERING_CONTROLS)).toBeElementsArrayOfSize(0);
+}
+
+export async function expectNoControls(el: ReturnType<typeof $>): Promise<void> {
+  await expect(el.$$("button, input, textarea, select")).toBeElementsArrayOfSize(0);
 }
 
 export async function markWindow(): Promise<void> {
@@ -245,32 +364,43 @@ export function windowKept(): Promise<boolean> {
   return browser.execute(() => document.body.dataset.agentsE2e === "kept");
 }
 
-export async function markNote(id: string): Promise<void> {
+export async function markTab(id: string): Promise<void> {
   await browser.execute(
-    (type, cardId) => {
-      const note = document.querySelector<HTMLElement>(
-        `.workspace-leaf-content[data-type="${type}"] .agents-inbox-card[data-id="${cardId}"] textarea.agents-inbox-note`,
-      );
-      if (note) note.dataset.agentsE2e = "kept";
+    (target) => {
+      const el = document.querySelector<HTMLElement>(target);
+      if (el) el.dataset.agentsE2e = "kept";
     },
-    VIEW_TYPE,
-    id,
+    `${TABS} .agents-inbox-item[data-id="${id}"]`,
   );
 }
 
-export function noteState(id: string): Promise<{ kept: boolean; focused: boolean; value: string | null }> {
+export function tabKept(id: string): Promise<boolean> {
   return browser.execute(
-    (type, cardId) => {
-      const note = document.querySelector<HTMLTextAreaElement>(
-        `.workspace-leaf-content[data-type="${type}"] .agents-inbox-card[data-id="${cardId}"] textarea.agents-inbox-note`,
-      );
+    (target) => document.querySelector<HTMLElement>(target)?.dataset.agentsE2e === "kept",
+    `${TABS} .agents-inbox-item[data-id="${id}"]`,
+  );
+}
+
+export async function markComposer(id: string): Promise<void> {
+  await browser.execute(
+    (target) => {
+      const el = document.querySelector<HTMLElement>(target);
+      if (el) el.dataset.agentsE2e = "kept";
+    },
+    `${TABS} .agents-inbox-item[data-id="${id}"] textarea.agents-inbox-composer`,
+  );
+}
+
+export function composerState(id: string): Promise<{ kept: boolean; focused: boolean; value: string | null }> {
+  return browser.execute(
+    (target) => {
+      const el = document.querySelector<HTMLTextAreaElement>(target);
       return {
-        kept: note?.dataset.agentsE2e === "kept",
-        focused: note !== null && document.activeElement === note,
-        value: note?.value ?? null,
+        kept: el?.dataset.agentsE2e === "kept",
+        focused: el !== null && document.activeElement === el,
+        value: el?.value ?? null,
       };
     },
-    VIEW_TYPE,
-    id,
+    `${TABS} .agents-inbox-item[data-id="${id}"] textarea.agents-inbox-composer`,
   );
 }

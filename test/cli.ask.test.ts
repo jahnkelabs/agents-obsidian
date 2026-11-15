@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "../src/schema";
@@ -30,6 +30,41 @@ describe("inbox ask", () => {
       answer: null,
       body: BODY,
     });
+  });
+
+  it("writes a pick-one item with an empty thread by default", () => {
+    const docs = tempDocs();
+    const id = inbox(docs, ["ask", "--kind", "decide", "--from", "plan · s1", "--option", "yaml"], BODY).stdout.trim();
+
+    expect(parse(readFileSync(join(docs, "inbox", `${id}.md`), "utf8"))).toMatchObject({ select: "one", thread: [] });
+  });
+
+  it("writes a pick-many item with a list of recommended labels", () => {
+    const docs = tempDocs();
+    const options = ["lint", "typecheck", "unit tests", "e2e"].flatMap((label) => ["--option", label]);
+    const result = inbox(
+      docs,
+      ["ask", "--kind", "decide", "--from", "plan · s1", "--select", "many", ...options, "--recommended", "lint", "--recommended", "typecheck"],
+      BODY,
+    );
+
+    expect(result.status).toBe(0);
+    const item = parse(readFileSync(join(docs, "inbox", `${result.stdout.trim()}.md`), "utf8"));
+    expect(item).toMatchObject({ select: "many", options: ["lint", "typecheck", "unit tests", "e2e"], recommended: ["lint", "typecheck"] });
+  });
+
+  it.each([
+    ["select", ["--select", "few", "--option", "yes"]],
+    ["select", ["--select", "many"]],
+    ["recommended", ["--option", "yes", "--option", "no", "--recommended", "yes", "--recommended", "no"]],
+    ["recommended", ["--select", "many", "--option", "yes", "--recommended", "maybe"]],
+  ])("rejects a bad %s and writes nothing", (field, args) => {
+    const docs = tempDocs();
+    const result = inbox(docs, ["ask", "--kind", "decide", "--from", "plan · s1", ...args], BODY);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toMatch(new RegExp(`${field}:`));
+    expect(existsSync(join(docs, "inbox")) ? readdirSync(join(docs, "inbox")) : []).toEqual([]);
   });
 
   it("adds a suffix when the id is already taken", () => {
@@ -71,5 +106,13 @@ describe("inbox ask", () => {
 
     expect(result.status).toBe(2);
     expect(result.stderr).toMatch(/kind:/);
+  });
+
+  it("rejects an option label given twice", () => {
+    const docs = tempDocs();
+    const result = inbox(docs, ["ask", "--kind", "decide", "--from", "plan · s1", "--option", "a", "--option", "a"], BODY);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toMatch(/^inbox: options: must not repeat a label/m);
   });
 });

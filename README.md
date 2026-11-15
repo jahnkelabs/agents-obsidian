@@ -11,18 +11,30 @@ id=$(printf '**Deciding — Frontmatter library**\n' |
   inbox ask --kind decide --from "plan · s1" --option yaml --option gray-matter --recommended yaml)
 
 inbox wait "$id" --timeout 3600
-# {"answer":"yaml","note":null,"answered_by":"chat"}
+# {"event":"answer","answer":"yaml","note":null,"answered_by":"chat"}
 ```
 
 Answer from a terminal with `inbox answer "$id" --option yaml --note "keep it simple"`.
 
-Exit codes: 0 success, 2 error, 3 another answer already won, 4 `wait` timed out.
+`inbox ask --select many` asks a pick-many question, and its answer is a list of labels. `inbox wait` also returns on a message you post in Obsidian, as `{"event":"message","messages":[…]}`. It returns each message once, and marks it with `delivered_at` in the item, so a message you post while the agent writes its reply reaches the next `wait`. The agent answers it with `inbox reply "$id"`, which reads markdown on stdin, and then waits again.
+
+After a discussion, the agent can change the choices with `inbox revise "$id" --option yaml --option toml --recommended toml --note "toml reads better"`. It replaces `--select`, `--option`, and `--recommended`, or removes the choices with `--open`. A flag you leave out keeps its value, and a kept recommendation drops any label no longer offered. The thread records one agent entry naming what was added, what was removed, and the new recommendation. `inbox wait` does not wake on that entry. A revise on an answered item exits 3 and prints the winner.
+
+An answer is checked under the lock against the choices its sender read. When a revise changed them in between, `inbox answer` exits 5, writes nothing, and prints the current `select`, `options`, and `recommended`. An answer that does not fit the choices it was sent against exits 2 and names the field.
+
+Exit codes: 0 success, 2 error, 3 another answer already won, 4 `wait` timed out, 5 the choices changed under your answer.
 
 ## The Obsidian panel
 
-The `agents` plugin lists every item that waits on you in Obsidian's right sidebar. It reads `inbox/` and `maps/*/inbox/` under the vault root, so the vault is your docs directory. Items group by map, then concern, newest first, with root items under "No map".
+The `agents` plugin lists every item that waits on you in Obsidian's right sidebar, one row per item: its title, kind, and age. It reads `inbox/` and `maps/*/inbox/` under the vault root, so the vault is your docs directory. Items group by map, then concern, newest first, with root items under "No map". A dot marks a row whose agent replied since you last viewed it. The plugin keeps that state in its own data, never in the item.
 
-Click an option to answer, with an optional note. An item with no options takes the note as its answer. The panel answers through the same first-answer-wins store as the CLI, with `answered_by: inbox`, so a waiting `inbox wait` returns. When another surface won first, the card shows that answer and writes nothing.
+Click a row to open the item in a main-area tab. A second click on the same row focuses that tab. The tab renders the body and the thread as markdown, mermaid diagrams included, and it updates in place when the item changes.
+
+Ask the agent a clarifying question in the message box at the bottom of the thread. Cmd/Ctrl+Enter sends, and Enter adds a line. The agent's `inbox wait` returns your message, and its `inbox reply` appears in the tab.
+
+Answer whenever you are ready. A pick-one item offers radio buttons, and a pick-many item offers checkboxes and needs at least one tick. Add an optional note, then click Answer. An item with no options takes the note as its answer. The tab answers through the same first-answer-wins store as the CLI, with `answered_by: inbox`, so a waiting `inbox wait` returns. An answered item accepts no more messages, and its tab shows the winning answer with no controls.
+
+When the agent revises the choices, an open tab shows the new choices in place and keeps your ticks on the choices that remain. A switch to pick-one keeps only the first tick. A Notice names every choice that lost its tick, and keeps any text you typed when the question opens or closes. An answer that arrives after the choices changed is refused and writes nothing, and the tab shows the current choices.
 
 Install it into your vault, then enable "Agents" under Settings → Community plugins:
 

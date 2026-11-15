@@ -1,6 +1,6 @@
 import { expect } from "@wdio/globals";
 import { obsidianPage } from "wdio-obsidian-service";
-import { ask, card, cardGroups, closeInbox, groupTitles, openInbox, panel, reset, snapshot } from "./helpers";
+import { ask, closeInbox, groupTitles, openInbox, panel, reset, row, rowGroups, snapshot } from "./helpers";
 
 const BROKEN = `---
 type: inbox
@@ -26,11 +26,13 @@ describe("listing awaiting items", () => {
   it("groups items by map then concern, root last, newest first, without answered items", async () => {
     await openInbox();
     expect(await groupTitles()).toEqual(["m1 / c1", "m1 / c2", "m2", "No map"]);
-    expect(await cardGroups()).toEqual([
+    expect(await rowGroups()).toEqual([
       { id: "m1-newer", group: "m1 / c1" },
       { id: "m1-earlier", group: "m1 / c1" },
       { id: "m1-c2", group: "m1 / c2" },
+      { id: "m2-pick-many", group: "m2" },
       { id: "m2-open-question", group: "m2" },
+      { id: "root-thread", group: "No map" },
       { id: "root-question", group: "No map" },
     ]);
   });
@@ -43,13 +45,13 @@ describe("listing awaiting items", () => {
     expect(snapshot()).toEqual(before);
 
     const id = ask([], "**Deciding — Relist**\n\nfound: new\n");
-    await card(id).waitForExist();
+    await row(id).waitForExist();
     const after = snapshot();
     expect(Object.keys(after).filter((rel) => !(rel in before))).toEqual([`inbox/${id}.md`]);
     for (const rel of Object.keys(before)) expect(after[rel]).toBe(before[rel]);
   });
 
-  it("shows a malformed item as an error card that names the file and the field", async () => {
+  it("shows a malformed item as an error row that names the file and the field", async () => {
     await obsidianPage.write("inbox/broken.md", BROKEN);
     await openInbox();
     const broken = panel().$('.agents-inbox-broken[data-path="inbox/broken.md"]');

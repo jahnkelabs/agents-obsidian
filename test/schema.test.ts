@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parse, SchemaError, serialize } from "../src/schema";
-import { expectHandStyleKept, frontmatter, HAND } from "./hand";
+import { C5_DEFAULTS, expectHandStyleKept, frontmatter, HAND } from "./hand";
 
 const VALID = `---
 type: inbox
@@ -9,10 +9,16 @@ map: 2026-11-03t0530-inbox-plugin
 concern: c1-inbox-protocol
 from: plan · s1
 status: answered
+select: one
 options:
   - yaml
   - gray-matter
 recommended: yaml
+thread:
+  - author: you
+    at: 2026-11-03T05:30:30.000Z
+    text: |
+      Which one is smaller?
 answer: gray-matter
 note: "keep it: simple"
 answered_by: inbox
@@ -38,7 +44,7 @@ describe("schema", () => {
   it("keeps a hand-formatted item's values, comments, quotes, flow style, key order, and unknown keys", () => {
     const after = serialize(parse(HAND));
 
-    expect(frontmatter(after)).toEqual(frontmatter(HAND));
+    expect(frontmatter(after)).toEqual({ ...frontmatter(HAND), ...C5_DEFAULTS });
     expectHandStyleKept(after);
     expect(parse(after).body).toBe(parse(HAND).body);
   });

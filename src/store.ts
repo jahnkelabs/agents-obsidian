@@ -3,12 +3,18 @@ import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, realpathSyn
 import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { type Answerer, type Item, parse, serialize, SLUG } from "./schema";
+import { type Answerer, type Item, labelsOf, type Message, parse, type Revision, type Select, serialize, shaped, SLUG } from "./schema";
+
+export interface Choices {
+  select: Select;
+  options: string[];
+}
 
 export interface Answer {
-  answer: string;
+  answer: string | string[];
   note: string | null;
   answered_by: Answerer;
+  basis: Choices;
 }
 
 const STALE_LOCK_MS = 30_000;
@@ -66,23 +72,98 @@ export function createItem(docs: string, item: Item): string {
   }
 }
 
-export async function answerItem(path: string, answer: Answer): Promise<{ won: boolean; item: Item }> {
+export interface ChoiceChange {
+  select?: Select;
+  options?: string[];
+  recommended?: string[];
+  open?: boolean;
+  note?: string;
+}
+
+export function answerItem(path: string, answer: Answer): Promise<{ won: boolean; stale?: boolean; item: Item }> {
+  return withLock(path, (item) => {
+    if (item.status === "answered") return { won: false, item };
+
+    if (!sameChoices(answer.basis, item)) return { won: false, stale: true, item };
+
+    const { basis: _, ...fields } = answer;
+    const value = Array.isArray(fields.answer) ? shaped(item.select, fields.answer) : fields.answer;
+    const answered: Item = { ...item, ...fields, answer: value, status: "answered", answered_at: new Date().toISOString() };
+    writeAtomic(path, serialize(answered));
+    return { won: true, item: answered };
+  });
+}
+
+export function appendMessage(path: string, message: Omit<Message, "at">): Promise<{ appended: boolean; item: Item }> {
+  return withLock(path, (item) => {
+    if (item.status === "answered") return { appended: false, item };
+
+    const appended: Item = { ...item, thread: [...item.thread, { author: message.author, text: message.text, at: stamp(item) }] };
+    writeAtomic(path, serialize(appended));
+    return { appended: true, item: appended };
+  });
+}
+
+export function deliverMessages(path: string): Promise<{ item: Item; messages: Message[] }> {
+  return withLock(path, (item) => {
+    const pending = (message: Message) => message.author === "you" && message.delivered_at === undefined;
+    const messages = item.status === "answered" ? [] : item.thread.filter(pending);
+    if (messages.length === 0) return { item, messages };
+
+    const delivered_at = new Date().toISOString();
+    const delivered: Item = { ...item, thread: item.thread.map((message) => (pending(message) ? { ...message, delivered_at } : message)) };
+    writeAtomic(path, serialize(delivered));
+    return { item: delivered, messages };
+  });
+}
+
+export function reviseChoices(path: string, change: ChoiceChange): Promise<{ revised: boolean; item: Item }> {
+  return withLock(path, (item) => {
+    if (item.status === "answered") return { revised: false, item };
+
+    const select = change.open ? "one" : (change.select ?? item.select);
+    const options = change.open ? [] : (change.options ?? item.options);
+    const recommended = change.open ? [] : (change.recommended ?? labelsOf(item.recommended).filter((label) => options.includes(label)));
+    const revision: Revision = {
+      select,
+      added: options.filter((label) => !item.options.includes(label)),
+      removed: item.options.filter((label) => !options.includes(label)),
+      recommended,
+    };
+    const revised: Item = {
+      ...item,
+      select,
+      options,
+      recommended: recommended.length === 0 ? null : shaped(select, recommended),
+      thread: [...item.thread, { author: "agent", at: stamp(item), text: change.note ?? "", revision }],
+    };
+    writeAtomic(path, serialize(revised));
+    return { revised: true, item: revised };
+  });
+}
+
+export function answerOf(item: Item) {
+  return { answer: item.answer, note: item.note, answered_by: item.answered_by };
+}
+
+async function withLock<T>(path: string, change: (item: Item) => T): Promise<T> {
   const lock = `${path}.lock`;
   await acquireLock(lock);
   try {
-    const item = readItem(path);
-    if (item.status === "answered") return { won: false, item };
-
-    const answered: Item = { ...item, ...answer, status: "answered", answered_at: new Date().toISOString() };
-    writeAtomic(path, serialize(answered));
-    return { won: true, item: answered };
+    return change(readItem(path));
   } finally {
     removeQuietly(lock);
   }
 }
 
-export function answerOf(item: Item) {
-  return { answer: item.answer, note: item.note, answered_by: item.answered_by };
+function stamp(item: Item): string {
+  const last = item.thread.at(-1);
+  const now = Date.now();
+  return last !== undefined && Date.parse(last.at) > now ? last.at : new Date(now).toISOString();
+}
+
+function sameChoices(basis: Choices, item: Item): boolean {
+  return basis.select === item.select && basis.options.length === item.options.length && basis.options.every((label, i) => label === item.options[i]);
 }
 
 function assertInside(docs: string, path: string): void {
