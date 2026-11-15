@@ -404,3 +404,85 @@ export function composerState(id: string): Promise<{ kept: boolean; focused: boo
     `${TABS} .agents-inbox-item[data-id="${id}"] textarea.agents-inbox-composer`,
   );
 }
+
+export function searchBox() {
+  return $(`${SIDEBAR} .agents-inbox-toolbar .search-input-container input`);
+}
+
+export async function search(text: string): Promise<void> {
+  await searchBox().setValue(text);
+}
+
+export function header(): Promise<string> {
+  return browser.execute(
+    (sidebar) => [...document.querySelectorAll<HTMLElement>(`${sidebar} .agents-inbox-header > span`)].map((el) => el.textContent ?? "").join(" "),
+    SIDEBAR,
+  );
+}
+
+export function snippet(id: string) {
+  return row(id).$(".agents-inbox-row-snippet");
+}
+
+export function location(id: string) {
+  return row(id).$(".agents-inbox-row-location");
+}
+
+export function noMatch() {
+  return panel().$(".agents-inbox-no-match");
+}
+
+export function chips(): Promise<string[]> {
+  return browser.execute(
+    (sidebar) => [...document.querySelectorAll<HTMLElement>(`${sidebar} .agents-inbox-chip-label`)].map((el) => el.textContent ?? ""),
+    SIDEBAR,
+  );
+}
+
+export async function removeChip(section: "state" | "kind" | "map"): Promise<void> {
+  await panel().$(`.agents-inbox-chip[data-section="${section}"] .agents-inbox-chip-remove`).click();
+}
+
+async function openMenu(button: "filter" | "group"): Promise<void> {
+  await panel().$(`.agents-inbox-${button}-button`).click();
+  await $(".menu").waitForDisplayed({ timeoutMsg: `the ${button} menu never opened` });
+}
+
+export async function pick(button: "filter" | "group", label: string): Promise<void> {
+  await openMenu(button);
+  const item = $(
+    `//div[contains(concat(" ", normalize-space(@class), " "), " menu-item ")][.//span[contains(@class, "agents-inbox-menu-label") and normalize-space(.)="${label}"]]`,
+  );
+  await item.click();
+  await $(".menu").waitForExist({ reverse: true, timeoutMsg: `the ${button} menu stayed open after ${label}` });
+}
+
+export async function arrange(groupBy: string, sort: string): Promise<void> {
+  await pick("group", groupBy);
+  await pick("group", sort);
+}
+
+export async function filterCounts(): Promise<Record<string, number>> {
+  await openMenu("filter");
+  const counts = await browser.execute(() =>
+    Object.fromEntries(
+      [...document.querySelectorAll(".menu .menu-item")].flatMap((el) => {
+        const label = el.querySelector(".agents-inbox-menu-label")?.textContent;
+        const count = el.querySelector(".agents-inbox-menu-count")?.textContent;
+        return label == null || count == null ? [] : [[label, Number(count)]];
+      }),
+    ),
+  );
+  await browser.keys("Escape");
+  await $(".menu").waitForExist({ reverse: true, timeoutMsg: "the filter menu stayed open" });
+  return counts;
+}
+
+export async function savedSidebar(): Promise<unknown> {
+  return await browser.executeObsidian(async ({ plugins }) => ((await plugins.agents.loadData()) ?? {}).sidebar ?? null);
+}
+
+export async function pluginDataFile(): Promise<string> {
+  const dir = await browser.executeObsidian(({ plugins }) => plugins.agents.manifest.dir as string);
+  return join(vault(), dir, "data.json");
+}

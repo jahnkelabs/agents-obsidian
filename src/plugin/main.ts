@@ -2,14 +2,24 @@ import { relative, sep } from "node:path";
 import { FileSystemAdapter, Notice, Plugin, type TAbstractFile, type WorkspaceLeaf } from "obsidian";
 import { type Entry, isInboxPath, lastAgentAt, unread } from "./inbox";
 import { InboxItemView, ITEM_VIEW_TYPE } from "./item-view";
-import { InboxView, VIEW_TYPE } from "./view";
+import type { GroupBy, Sort } from "./organize";
+import { GROUP_BY, InboxView, SORT, VIEW_TYPE } from "./view";
+
+interface Sidebar {
+  groupBy: GroupBy;
+  sort: Sort;
+}
 
 interface Data {
   seen: Record<string, number>;
+  sidebar?: Sidebar;
 }
+
+const DEFAULT_SIDEBAR: Sidebar = { groupBy: "concern", sort: "newest" };
 
 export default class AgentsPlugin extends Plugin {
   docs = "";
+  sidebar: Sidebar = DEFAULT_SIDEBAR;
   private seen: Record<string, number> = {};
 
   async onload(): Promise<void> {
@@ -21,6 +31,7 @@ export default class AgentsPlugin extends Plugin {
     this.docs = adapter.getBasePath();
     const data = (await this.loadData()) as Partial<Data> | null;
     this.seen = data?.seen ?? {};
+    this.sidebar = readSidebar(data?.sidebar);
 
     this.registerView(VIEW_TYPE, (leaf) => new InboxView(leaf, this));
     this.registerView(ITEM_VIEW_TYPE, (leaf) => new InboxItemView(leaf, this));
@@ -52,9 +63,18 @@ export default class AgentsPlugin extends Plugin {
     if (!unread(entry, this.seen[path])) return;
     this.seen[path] = Math.max(Date.now(), lastAgentAt(entry.item) ?? 0);
     try {
-      await this.saveData({ seen: this.seen } satisfies Data);
+      await this.save();
     } finally {
       this.refreshList();
+    }
+  }
+
+  async saveSidebar(sidebar: Sidebar): Promise<void> {
+    this.sidebar = sidebar;
+    try {
+      await this.save();
+    } catch (error) {
+      new Notice(`Inbox: ${(error as Error).message}`);
     }
   }
 
@@ -80,6 +100,10 @@ export default class AgentsPlugin extends Plugin {
     await workspace.revealLeaf(leaf);
   }
 
+  private save(): Promise<void> {
+    return this.saveData({ seen: this.seen, sidebar: this.sidebar } satisfies Data);
+  }
+
   private refreshList(): void {
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
       if (leaf.view instanceof InboxView) leaf.view.refresh();
@@ -93,4 +117,16 @@ export default class AgentsPlugin extends Plugin {
       if (leaf.view instanceof InboxItemView) void leaf.view.refresh(vaultPath);
     }
   }
+}
+
+function readSidebar(saved: unknown): Sidebar {
+  const fields = typeof saved === "object" && saved !== null ? (saved as Record<string, unknown>) : {};
+  return {
+    groupBy: oneOf(GROUP_BY, fields.groupBy) ?? DEFAULT_SIDEBAR.groupBy,
+    sort: oneOf(SORT, fields.sort) ?? DEFAULT_SIDEBAR.sort,
+  };
+}
+
+function oneOf<T extends string>(choices: Record<T, string>, value: unknown): T | undefined {
+  return typeof value === "string" && Object.hasOwn(choices, value) ? (value as T) : undefined;
 }
