@@ -17,6 +17,13 @@ The first fixture concern proves the split view and its reading aids.
 | Criterion two: the split tints this row | `npm run e2e` | no file changes |
 | Criterion three: the outline scrolls the split | `npm run e2e` | no aid outside the split |
 
+## Fees \& `limits` %%draft%%
+
+| Limit | Value |
+|---|---|
+| Limit one | the first limit |
+| Limit two: the split tints this limit | the second limit |
+
 ## Not doing
 
 - Nothing beyond the fixture.

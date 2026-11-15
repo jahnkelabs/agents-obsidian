@@ -8,7 +8,7 @@ awaiting: null
 
 - A fixture map for the inbox plugin's end-to-end tests.
 
-## Concerns
+## `Concerns` %%table%%
 
 ```base
 filters:

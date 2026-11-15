@@ -1,10 +1,14 @@
+import { rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { browser, expect } from "@wdio/globals";
 import {
   answerButton,
+  aidsInSplit,
   ask,
   C1_DESIGN,
   C1_IMPLEMENTATION,
   C1_REQUIREMENTS,
+  DOC_VIEW_TYPE,
   citation,
   clickContext,
   closeMarkdownTabs,
@@ -12,6 +16,7 @@ import {
   dismissNotices,
   docLeafKept,
   docScroll,
+  docView,
   hoverPreview,
   itemTabs,
   M1_NEWER,
@@ -19,12 +24,15 @@ import {
   markdownTabs,
   markTab,
   openItem,
+  outlineEntries,
   reply,
   reset,
   snapshot,
   splitState,
+  steps,
   tab,
   tabKept,
+  vault,
   waitForContext,
   waitForDoc,
   waitForHeadingAtTop,
@@ -129,5 +137,81 @@ describe("an item's map context", () => {
     expect(await tabKept(id)).toBe(true);
     expect((await itemTabs()).paths).toEqual([rel]);
     expect(snapshot()).toEqual(before);
+  });
+});
+
+describe("the split while its document or its state changes", () => {
+  beforeEach(async () => {
+    await reset();
+    await closeMarkdownTabs();
+  });
+
+  it("scrolls to a nested heading a citation names as a chain", async () => {
+    const id = ask(["--map", "m1", "--concern", "c1", "--option", "a", "--option", "b"], "**Deciding — nested**\n\nSee [[c1/design#Failure handling#Scope]].\n");
+    await openItem(id);
+    await citation(id, "c1/design#Failure handling#Scope").click();
+    await waitForDoc(C1_DESIGN);
+    await waitForHeadingAtTop("Scope");
+  });
+
+  it("follows the open document when it is renamed, and shows the missing state when it is deleted", async () => {
+    await openItem("m1-newer");
+    await clickContext("m1-newer", "design");
+    await waitForDoc(C1_DESIGN);
+    await browser.executeObsidian(async ({ app }, from, to) => {
+      const file = app.vault.getFileByPath(from);
+      if (file !== null) await app.vault.rename(file, to);
+    }, C1_DESIGN, "maps/m1/c1/design-v1.md");
+    await waitForDoc("maps/m1/c1/design-v1.md");
+    await expect(docView().$(".agents-inbox-doc-missing")).not.toBeExisting();
+    expect(await outlineEntries()).toContain("Data model");
+
+    rmSync(join(vault(), "maps/m1/c1/design-v1.md"));
+    await docView().$(".agents-inbox-doc-missing-title").waitForExist();
+    await expect(docView().$(".agents-inbox-doc-missing-title")).toHaveText("This document no longer exists");
+    await expect(docView().$(".agents-inbox-doc-missing-path")).toHaveText("maps/m1/c1/design-v1.md");
+    await expect(docView().$(".agents-inbox-doc-open")).not.toBeDisplayed();
+    expect((await splitState()).docs).toHaveLength(1);
+  });
+
+  it("opens the shown document in Obsidian's own view from Open in editor, and keeps the split", async () => {
+    await openItem("m1-newer");
+    await clickContext("m1-newer", "design");
+    await waitForDoc(C1_DESIGN);
+    await docView().$(".agents-inbox-doc-open").click();
+    await browser.waitUntil(async () => (await markdownTabs()).includes(C1_DESIGN), {
+      timeoutMsg: "Open in editor never opened the design in a markdown tab",
+    });
+    expect((await splitState()).docs).toEqual([{ path: C1_DESIGN, itemPath: M1_NEWER }]);
+  });
+
+  it("shows no aid for an unknown step or a malformed type", async () => {
+    await openItem("m1-newer");
+    await clickContext("m1-newer", "implementation");
+    await waitForDoc(C1_IMPLEMENTATION);
+    expect(await steps()).toHaveLength(7);
+
+    const path = join(vault(), C1_IMPLEMENTATION);
+    writeFileSync(path, "---\ntype: implementation\nstep: shipped\n---\n## Where the code is\n\nShipped text.\n");
+    await docView().$("p=Shipped text.").waitForExist();
+    expect(await aidsInSplit()).toBe(0);
+
+    writeFileSync(path, "---\ntype: [\n---\n## Where the code is\n\nMalformed text.\n");
+    await docView().$("p=Malformed text.").waitForExist();
+    expect(await aidsInSplit()).toBe(0);
+  });
+
+  it("reuses the item's split after Obsidian reloads the workspace layout", async () => {
+    await openItem("m1-newer");
+    await clickContext("m1-newer", "design");
+    await waitForDoc(C1_DESIGN);
+    await browser.executeObsidian(async ({ app }) => {
+      await app.workspace.changeLayout(app.workspace.getLayout());
+    });
+    await waitForContext("m1-newer", { where: "m1 / c1", links: ["Map", "Requirements", "Design · open", "Implementation"] });
+    await clickContext("m1-newer", "requirements");
+    await waitForDoc(C1_REQUIREMENTS);
+    expect(await splitState()).toEqual({ docs: [{ path: C1_REQUIREMENTS, itemPath: M1_NEWER }], beside: true });
+    expect(await browser.executeObsidian(({ app }, type) => app.workspace.getLeavesOfType(type).length, DOC_VIEW_TYPE)).toBe(1);
   });
 });

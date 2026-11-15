@@ -14,7 +14,7 @@ import {
   type WorkspaceLeaf,
 } from "obsidian";
 import { readItem } from "../store";
-import { type Citation, citedRow, designOutline, parseCitation, stepIndex } from "./context";
+import { type Citation, parseCitation, STEPS, stepIndex } from "./context";
 import { REFRESH_DELAY_MS } from "./dom";
 import type AgentsPlugin from "./main";
 
@@ -36,7 +36,7 @@ interface ConcernRow {
   stage: unknown;
 }
 
-const STEP_LABELS = ["not started", "sliced", "built", "critiqued", "committed", "pr-open", "landed"];
+const STEP_LABELS = STEPS.map((step) => step ?? "not started");
 const CONCERN_COLUMNS: { key: keyof ConcernRow; label: string }[] = [
   { key: "order", label: "Order" },
   { key: "concern", label: "Concern" },
@@ -45,15 +45,11 @@ const CONCERN_COLUMNS: { key: keyof ConcernRow; label: string }[] = [
   { key: "stage", label: "Stage" },
 ];
 
-const FENCE = /^ {0,3}(`{3,}|~{3,})/;
-const BASE_FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*base[ \t]*$/;
-const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/;
-
 export function handleLinks(
   view: ItemView & HoverParent,
   el: HTMLElement,
   sourcePath: () => string,
-  open: (linktext: string, citation: Citation | null) => void,
+  open: (linktext: string, citation: Citation) => void,
 ): void {
   view.registerDomEvent(el, "click", (event) => {
     const link = internalLink(event.target);
@@ -62,10 +58,12 @@ export function handleLinks(
     event.stopPropagation();
     const linktext = linktextOf(link);
     const source = sourcePath();
-    open(
-      linktext,
-      parseCitation(linktext, link.textContent, (linkpath) => view.app.metadataCache.getFirstLinkpathDest(linkpath, source)?.path ?? null),
-    );
+    const citation = parseCitation(linktext, link.textContent, (linkpath) => view.app.metadataCache.getFirstLinkpathDest(linkpath, source)?.path ?? null);
+    if (citation === null) {
+      new Notice(`Inbox: no document for ${linktext}`);
+      return;
+    }
+    open(linktext, citation);
   });
   view.registerDomEvent(el, "mouseover", (event) => {
     const link = internalLink(event.target);
@@ -125,7 +123,7 @@ export class InboxDocView extends ItemView implements HoverParent {
       row: typeof state.row === "number" ? state.row : null,
     };
     await super.setState(state, result);
-    await this.enqueue(true);
+    void this.enqueue(true);
   }
 
   async onOpen(): Promise<void> {
@@ -143,7 +141,12 @@ export class InboxDocView extends ItemView implements HoverParent {
     this.registerEvent(this.app.vault.on("modify", touched));
     this.registerEvent(this.app.vault.on("create", touched));
     this.registerEvent(this.app.vault.on("delete", touched));
-    this.registerEvent(this.app.vault.on("rename", touched));
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => {
+        if (oldPath === this.state.path) this.state = { ...this.state, path: file.path };
+        touched(file, oldPath);
+      }),
+    );
   }
 
   async onClose(): Promise<void> {
@@ -168,11 +171,7 @@ export class InboxDocView extends ItemView implements HoverParent {
     return this.queue;
   }
 
-  private follow(linktext: string, citation: Citation | null): void {
-    if (citation === null) {
-      new Notice(`Inbox: no document for ${linktext}`);
-      return;
-    }
+  private follow(linktext: string, citation: Citation): void {
     if (!citation.vaultPath.endsWith(".md")) {
       void this.app.workspace.openLinkText(linktext, this.state.path, "tab");
       return;
@@ -189,7 +188,7 @@ export class InboxDocView extends ItemView implements HoverParent {
   }
 
   private async render(scroll: boolean): Promise<void> {
-    const { path, subpath } = this.state;
+    const { path, subpath, row, itemPath } = this.state;
     const kept = this.scrollEl.scrollTop;
     this.pathEl.setText(path);
     if (this.component !== null) this.removeChild(this.component);
@@ -211,26 +210,20 @@ export class InboxDocView extends ItemView implements HoverParent {
     const component = this.addChild(new Component());
     this.component = component;
     const docEl = this.scrollEl.createDiv({ cls: "agents-inbox-doc-body markdown-rendered" });
-    const renderPart = async (markdown: string) => {
-      await MarkdownRenderer.render(this.app, markdown, docEl.createDiv({ cls: "agents-inbox-doc-part" }), path, component);
-    };
+    await MarkdownRenderer.render(this.app, body, docEl, path, component);
 
     const type = fields.type;
-    const concerns = type === "map" ? splitConcerns(body) : null;
-    if (type === "map" && concerns !== null) {
-      await renderPart(concerns.before);
-      docEl.append(await this.concernTable(file, fields.map));
-      await renderPart(concerns.after);
-    } else {
-      await renderPart(body);
-    }
+    const concerns = type === "map" ? concernsBlock(docEl) : null;
+    if (concerns !== null) concerns.replaceWith(await this.concernTable(file, fields.map, itemPath));
 
+    const segments = (subpath ?? "").split("#").filter((segment) => segment.trim() !== "");
+    const targets = await Promise.all(segments.map((segment) => this.renderedHeading(segment, path, component)));
+    const heading = targets.length === 0 ? null : findHeading(docEl, targets);
     if (type === "requirements") {
-      const index = citedRow(text, subpath, this.state.row);
-      if (index !== null && subpath !== null) tableRowsUnder(docEl, subpath)[index - 1]?.addClass("is-cited");
+      if (heading !== null && row !== null) tableRowsUnder(docEl, heading)[row - 1]?.addClass("is-cited");
     } else if (type === "design") {
-      const outline = designOutline(text);
-      if (outline.length > 0) this.scrollEl.prepend(this.outlineStrip(outline));
+      const outline = headingsOf(docEl).filter((heading) => heading.tagName === "H2");
+      if (outline.length > 0) this.scrollEl.prepend(outlineStrip(outline));
     } else if (type === "implementation") {
       const step = fields.step === undefined ? null : fields.step;
       const at = step === null || typeof step === "string" ? stepIndex(step) : -1;
@@ -239,37 +232,31 @@ export class InboxDocView extends ItemView implements HoverParent {
 
     if (scroll) {
       this.scrollEl.scrollTop = 0;
-      if (subpath !== null) findHeading(docEl, subpath)?.scrollIntoView({ block: "start" });
+      heading?.scrollIntoView({ block: "start" });
     } else {
       this.scrollEl.scrollTop = kept;
     }
     this.contentEl.dataset.path = path;
   }
 
-  private outlineStrip(outline: string[]): HTMLElement {
-    const strip = createEl("nav", { cls: "agents-inbox-outline", attr: { "aria-label": "Design outline" } });
-    for (const heading of outline) {
-      const entry = strip.createEl("button", { cls: "agents-inbox-outline-entry", text: heading });
-      entry.onclick = () => {
-        const body = this.scrollEl.querySelector<HTMLElement>(".agents-inbox-doc-body");
-        if (body !== null) findHeading(body, heading)?.scrollIntoView({ block: "start" });
-      };
-    }
-    return strip;
+  private async renderedHeading(subpath: string, path: string, component: Component): Promise<string> {
+    const el = createDiv();
+    await MarkdownRenderer.render(this.app, `# ${subpath}`, el, path, component);
+    return headingText(el.querySelector<HTMLElement>("h1") ?? el);
   }
 
-  private async concernTable(mapFile: TFile, map: unknown): Promise<HTMLElement> {
+  private async concernTable(mapFile: TFile, map: unknown, itemPath: string): Promise<HTMLElement> {
     const folder = mapFile.parent?.path ?? "";
     const prefix = folder === "" || folder === "/" ? "" : `${folder}/`;
     const rows: ConcernRow[] = [];
     for (const file of this.app.vault.getMarkdownFiles()) {
       if (file.name !== "concern.md" || !file.path.startsWith(prefix)) continue;
-      const { fields } = frontmatterOf(await this.app.vault.cachedRead(file));
+      const fields: Record<string, unknown> = this.app.metadataCache.getFileCache(file)?.frontmatter ?? {};
       if (fields.type !== "concern" || fields.map !== map) continue;
       rows.push({ order: fields.order, concern: fields.concern, outcome: fields.outcome, after: fields.after, stage: fields.stage });
     }
     rows.sort(compareConcerns);
-    const current = this.itemConcern();
+    const current = this.itemConcern(itemPath);
 
     const table = createEl("table", { cls: "agents-inbox-concerns" });
     const head = table.createEl("thead").createEl("tr");
@@ -284,10 +271,10 @@ export class InboxDocView extends ItemView implements HoverParent {
     return table;
   }
 
-  private itemConcern(): string | null {
-    if (this.state.itemPath === "") return null;
+  private itemConcern(itemPath: string): string | null {
+    if (itemPath === "") return null;
     try {
-      return readItem(join(this.plugin.docs, this.state.itemPath)).concern;
+      return readItem(join(this.plugin.docs, itemPath)).concern;
     } catch {
       return null;
     }
@@ -328,56 +315,55 @@ function frontmatterOf(text: string): { fields: Record<string, unknown>; body: s
   return { fields, body: text.slice(info.contentStart) };
 }
 
-function splitConcerns(markdown: string): { before: string; after: string } | null {
-  const lines = markdown.split("\n");
-  let fence: string | null = null;
-  let inConcerns = false;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (fence !== null) {
-      if (closes(line, fence)) fence = null;
-      continue;
-    }
-    const base = BASE_FENCE.exec(line);
-    if (base !== null && inConcerns) {
-      const end = lines.findIndex((other, j) => j > i && closes(other, base[1]));
-      return { before: lines.slice(0, i).join("\n"), after: lines.slice(end === -1 ? lines.length : end + 1).join("\n") };
-    }
-    const open = FENCE.exec(line);
-    if (open !== null) {
-      fence = open[1];
-      continue;
-    }
-    const heading = HEADING.exec(line);
-    if (heading === null) continue;
-    if (heading[1].length === 2 && (heading[2] ?? "").trim().toLowerCase() === "concerns") inConcerns = true;
-    else if (heading[1].length <= 2) inConcerns = false;
+function concernsBlock(root: HTMLElement): HTMLElement | null {
+  const blocks = [...root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6, .block-language-base, code.language-base")].filter(outsideEmbeds);
+  const start = blocks.findIndex((el) => el.tagName === "H2" && headingText(el) === "concerns");
+  if (start === -1) return null;
+  for (const el of blocks.slice(start + 1)) {
+    if (el.tagName === "H1" || el.tagName === "H2") return null;
+    if (el.tagName === "CODE") return el.closest("pre") ?? el;
+    if (!/^H[3-6]$/.test(el.tagName)) return el;
   }
   return null;
 }
 
-function closes(line: string, fence: string): boolean {
-  const trimmed = line.trim();
-  return line.search(/\S/) <= 3 && trimmed.length >= fence.length && [...trimmed].every((char) => char === fence[0]);
+function outlineStrip(outline: HTMLElement[]): HTMLElement {
+  const strip = createEl("nav", { cls: "agents-inbox-outline", attr: { "aria-label": "Design outline" } });
+  for (const heading of outline) {
+    const entry = strip.createEl("button", { cls: "agents-inbox-outline-entry", text: (heading.textContent ?? "").trim() });
+    entry.onclick = () => heading.scrollIntoView({ block: "start" });
+  }
+  return strip;
+}
+
+function outsideEmbeds(el: HTMLElement): boolean {
+  return el.closest(".internal-embed") === null;
 }
 
 function headingsOf(root: HTMLElement): HTMLElement[] {
-  return [...root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")];
+  return [...root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6")].filter(outsideEmbeds);
 }
 
 function headingText(heading: HTMLElement): string {
-  return (heading.textContent ?? "").trim().toLowerCase();
+  return (heading.textContent ?? "").replace(/\s+/g, " ").trim().toLowerCase();
 }
 
-function findHeading(root: HTMLElement, subpath: string): HTMLElement | null {
-  const target = subpath.trim().toLowerCase();
-  return headingsOf(root).find((heading) => headingText(heading) === target) ?? null;
+function findHeading(root: HTMLElement, targets: string[]): HTMLElement | null {
+  const headings = headingsOf(root);
+  let found: HTMLElement | null = null;
+  let from = 0;
+  for (const target of targets) {
+    const at = headings.findIndex((heading, index) => index >= from && headingText(heading) === target);
+    if (at === -1) return null;
+    found = headings[at];
+    from = at + 1;
+  }
+  return found;
 }
 
-function tableRowsUnder(root: HTMLElement, subpath: string): HTMLElement[] {
-  const target = subpath.trim().toLowerCase();
-  const blocks = [...root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6, table")];
-  const start = blocks.findIndex((el) => el.tagName !== "TABLE" && headingText(el) === target);
+function tableRowsUnder(root: HTMLElement, heading: HTMLElement): HTMLElement[] {
+  const blocks = [...root.querySelectorAll<HTMLElement>("h1, h2, h3, h4, h5, h6, table")].filter(outsideEmbeds);
+  const start = blocks.indexOf(heading);
   if (start === -1) return [];
   const level = Number(blocks[start].tagName.slice(1));
   for (const el of blocks.slice(start + 1)) {

@@ -507,7 +507,8 @@ export async function pluginDataFile(): Promise<string> {
   return join(vault(), dir, "data.json");
 }
 
-export type DocKind = "map" | "requirements" | "design" | "implementation";
+export type { DocKind } from "../../src/plugin/context";
+import type { DocKind } from "../../src/plugin/context";
 
 export interface Context {
   where: string | null;
@@ -625,14 +626,15 @@ export function docScroll(heading: string): Promise<{ scrollTop: number; offset:
 
 export async function waitForHeadingAtTop(heading: string): Promise<void> {
   let seen = "";
-  await browser.waitUntil(
-    async () => {
+  try {
+    await browser.waitUntil(async () => {
       const { scrollTop, offset } = await docScroll(heading);
       seen = JSON.stringify({ scrollTop, offset });
       return scrollTop > 0 && offset !== null && Math.abs(offset) < 2;
-    },
-    { timeoutMsg: `the split never scrolled to ${heading}; last ${seen}` },
-  );
+    });
+  } catch {
+    throw new Error(`the split never scrolled to ${heading}; last ${seen}`);
+  }
 }
 
 export async function hoverPreview(text: string): Promise<void> {

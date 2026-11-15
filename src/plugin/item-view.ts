@@ -16,7 +16,8 @@ import {
 import { type Item, labelsOf, type Message } from "../schema";
 import { answerItem, appendMessage, readItem } from "../store";
 import { type Citation, contextDocs } from "./context";
-import { handleLinks } from "./doc-view";
+import { type DocState, handleLinks } from "./doc-view";
+import { locationOf } from "./organize";
 import { age, answerText, title } from "./inbox";
 import type AgentsPlugin from "./main";
 import { place, REFRESH_DELAY_MS } from "./dom";
@@ -266,18 +267,14 @@ export class InboxItemView extends ItemView implements HoverParent {
 
   renderContext(): void {
     const item = this.item;
-    if (item === null || item.map === null) {
-      this.contextEl.empty();
-      this.contextKey = null;
-      return;
-    }
+    if (item === null || item.map === null) return;
     const docs = contextDocs(item.map, item.concern, (vaultPath) => this.app.vault.getFileByPath(vaultPath) !== null);
     const open = this.plugin.contextPath(this.leaf);
     const key = JSON.stringify([item.map, item.concern, docs.map((doc) => doc.vaultPath), open]);
     if (key === this.contextKey) return;
     this.contextKey = key;
     this.contextEl.empty();
-    this.contextEl.createSpan({ cls: "agents-inbox-context-where", text: item.concern === null ? item.map : `${item.map} / ${item.concern}` });
+    this.contextEl.createSpan({ cls: "agents-inbox-context-where", text: locationOf(item.map, item.concern) });
     for (const doc of docs) {
       this.contextEl.createSpan({ cls: "agents-inbox-sep", text: "·", attr: { "aria-hidden": "true" } });
       const isOpen = doc.vaultPath === open;
@@ -301,11 +298,7 @@ export class InboxItemView extends ItemView implements HoverParent {
     }
   }
 
-  private openCitation(linktext: string, citation: Citation | null): void {
-    if (citation === null) {
-      new Notice(`Inbox: no document for ${linktext}`);
-      return;
-    }
+  private openCitation(linktext: string, citation: Citation): void {
     const map = this.item?.map ?? null;
     if (map !== null && citation.vaultPath.startsWith(`maps/${map}/`) && citation.vaultPath.endsWith(".md")) {
       this.openDoc({ path: citation.vaultPath, subpath: citation.subpath, row: citation.row });
@@ -314,7 +307,7 @@ export class InboxItemView extends ItemView implements HoverParent {
     }
   }
 
-  private openDoc(target: { path: string; subpath: string | null; row: number | null }): void {
+  private openDoc(target: Omit<DocState, "itemPath">): void {
     this.plugin.openContext(this.leaf, target).catch((error) => {
       new Notice(`Inbox: ${(error as Error).message}`);
     });

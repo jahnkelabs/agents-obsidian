@@ -94,7 +94,7 @@ export default class AgentsPlugin extends Plugin {
     workspace.setActiveLeaf(leaf, { focus: true });
   }
 
-  async openContext(itemLeaf: WorkspaceLeaf, target: { path: string; subpath: string | null; row: number | null }): Promise<void> {
+  async openContext(itemLeaf: WorkspaceLeaf, target: Omit<DocState, "itemPath">): Promise<void> {
     const { workspace } = this.app;
     const itemPath = pathOf(itemLeaf.getViewState().state, "path") ?? "";
     const leaf = this.docLeaf(itemLeaf) ?? workspace.createLeafBySplit(itemLeaf, "vertical");

@@ -97,7 +97,11 @@ awaiting: null
 - Failure handling, point 19: a line of fixture text long enough to fill the split.
 - Failure handling, point 20: a line of fixture text long enough to fill the split.
 
-## Decisions
+### Scope
+
+- Scope, point 1: a line of fixture text under a nested heading.
+
+## Decisions \& `notes` %%draft%%
 
 - Decisions, point 1: a line of fixture text long enough to fill the split.
 - Decisions, point 2: a line of fixture text long enough to fill the split.

@@ -20,13 +20,14 @@ import {
   outlineEntries,
   reset,
   steps,
+  tab,
   waitForDoc,
   waitForHeadingAtTop,
 } from "./helpers";
 
 const C1_ROW = ["1", "c1", "The first fixture concern, with all four documents", "", "implementing"];
 const C2_ROW = ["2", "c2", "The second fixture concern, with no documents yet", "c1", "open"];
-const OUTLINE = ["Structure", "Data model", "Interfaces", "Failure handling", "Decisions"];
+const OUTLINE = ["Structure", "Data model", "Interfaces", "Failure handling", "Decisions & notes"];
 const STEPS = ["not started", "sliced", "built", "critiqued", "committed", "pr-open", "landed"];
 
 describe("reading aids in the split", () => {
@@ -65,12 +66,44 @@ describe("reading aids in the split", () => {
     await waitForDoc(C1_REQUIREMENTS);
     expect(await citedRows()).toEqual(["Criterion two: the split tints this row"]);
 
+    for (const outside of ["Acceptance criteria|criterion 9", "Outcome|row 1"]) {
+      await closeInbox();
+      const other = ask(
+        ["--map", "m1", "--concern", "c1", "--option", "a", "--option", "b"],
+        `**Deciding — no such row**\n\nSee [[c1/requirements#${outside}]].\n`,
+      );
+      await openItem(other);
+      await citation(other, `c1/requirements#${outside.split("|")[0]}`).click();
+      await waitForDoc(C1_REQUIREMENTS);
+      expect(await citedRows()).toEqual([]);
+    }
+
+    await closeInbox();
+    await openItem(id);
     await clickContext(id, "design");
     await waitForDoc(C1_DESIGN);
     await clickContext(id, "requirements");
     await waitForDoc(C1_REQUIREMENTS);
     expect(await citedRows()).toEqual([]);
   });
+
+  for (const [how, heading] of [
+    ["as it renders", "Fees & limits"],
+    ["with the heading's own markup", "Fees \\& `limits`"],
+  ]) {
+    it(`tints a row under a heading written with markup, cited ${how}`, async () => {
+      const id = ask(
+        ["--map", "m1", "--concern", "c1", "--option", "a", "--option", "b"],
+        `**Deciding — marked heading**\n\nSee [[c1/requirements#${heading}|row 2]].\n`,
+      );
+      await openItem(id);
+      const link = tab(id).$("a.internal-link=row 2");
+      expect(await link.getAttribute("data-href")).toBe(`c1/requirements#${heading}`);
+      await link.click();
+      await waitForDoc(C1_REQUIREMENTS);
+      expect(await citedRows()).toEqual(["Limit two: the split tints this limit"]);
+    });
+  }
 
   it("shows the design's outline strip, and each entry scrolls the split to its part", async () => {
     await openItem("m1-newer");
@@ -82,6 +115,8 @@ describe("reading aids in the split", () => {
     await waitForHeadingAtTop("Failure handling");
     await clickOutline("Data model");
     await waitForHeadingAtTop("Data model");
+    await clickOutline("Decisions & notes");
+    await waitForHeadingAtTop("Decisions & notes");
   });
 
   it("shows the implementation's step strip, marking its step", async () => {
