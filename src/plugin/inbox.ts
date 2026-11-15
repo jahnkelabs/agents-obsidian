@@ -9,12 +9,6 @@ export interface Entry {
   item: Item;
 }
 
-export interface Group {
-  map: string | null;
-  concern: string | null;
-  entries: Entry[];
-}
-
 export interface Broken {
   path: string;
   error: string;
@@ -26,7 +20,7 @@ export function isInboxPath(vaultPath: string): boolean {
   return INBOX_PATH.test(vaultPath);
 }
 
-export function listAwaiting(docs: string): { groups: Group[]; broken: Broken[] } {
+export function listAwaiting(docs: string): { entries: Entry[]; broken: Broken[] } {
   const entries: Entry[] = [];
   const broken: Broken[] = [];
   for (const dir of inboxDirs(docs)) {
@@ -42,7 +36,7 @@ export function listAwaiting(docs: string): { groups: Group[]; broken: Broken[] 
       }
     }
   }
-  return { groups: group(entries), broken };
+  return { entries, broken };
 }
 
 export function lastAgentAt(item: Item): number | null {
@@ -86,25 +80,6 @@ function inboxDirs(docs: string): string[] {
   return dirs.filter((dir) => existsSync(dir));
 }
 
-function group(entries: Entry[]): Group[] {
-  const byKey = new Map<string, Group>();
-  for (const entry of entries) {
-    const { map, concern } = entry.item;
-    const key = groupKey(entry.item);
-    let found = byKey.get(key);
-    if (!found) byKey.set(key, (found = { map, concern, entries: [] }));
-    found.entries.push(entry);
-  }
-  const groups = [...byKey.values()];
-  for (const g of groups) g.entries.sort((a, b) => Date.parse(b.item.created_at) - Date.parse(a.item.created_at));
-  return groups.sort(compareGroups);
-}
-
 export function groupKey(g: { map: string | null; concern: string | null }): string {
   return `${g.map ?? ""}\u0000${g.concern ?? ""}`;
-}
-
-function compareGroups(a: Group, b: Group): number {
-  if ((a.map === null) !== (b.map === null)) return a.map === null ? 1 : -1;
-  return (a.map ?? "").localeCompare(b.map ?? "") || (a.concern ?? "").localeCompare(b.concern ?? "");
 }
