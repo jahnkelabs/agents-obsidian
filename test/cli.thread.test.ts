@@ -28,6 +28,7 @@ describe("inbox wait on a thread", () => {
     const docs = tempDocs();
     const id = ask(docs);
     await post(docs, id, "First question?\n");
+    expect(inbox(docs, ["wait", id, "--timeout", "0"]).status).toBe(0);
     expect(inbox(docs, ["reply", id], "First answer.\n").status).toBe(0);
 
     const waiting = inboxAsync(docs, ["wait", id]);
@@ -43,10 +44,11 @@ describe("inbox wait on a thread", () => {
     expect(JSON.parse(result.stdout).messages.map((m: { text: string }) => m.text)).toEqual(["Second question?\n"]);
   });
 
-  it("returns at once with every message of yours after the agent's last reply", async () => {
+  it("returns at once with every message of yours that no wait delivered, and marks them delivered", async () => {
     const docs = tempDocs();
     const id = ask(docs);
     await post(docs, id, "Old question?\n");
+    inbox(docs, ["wait", id, "--timeout", "0"]);
     inbox(docs, ["reply", id], "Old answer.\n");
     await post(docs, id, "One.\n");
     await post(docs, id, "Two.\n");
@@ -60,12 +62,30 @@ describe("inbox wait on a thread", () => {
       ["you", "One.\n"],
       ["you", "Two.\n"],
     ]);
+    const thread = parse(readText(docs, id)).thread;
+    expect(thread.filter((m) => m.author === "you").every((m) => typeof m.delivered_at === "string")).toBe(true);
+    expect(inbox(docs, ["wait", id, "--timeout", "0"]).status).toBe(4);
   });
 
-  it("times out when the thread ends with the agent's reply", async () => {
+  it("delivers a message you post while the agent writes its reply", async () => {
+    const docs = tempDocs();
+    const id = ask(docs);
+    await post(docs, id, "M1?\n");
+    expect(JSON.parse(inbox(docs, ["wait", id, "--timeout", "0"]).stdout).messages.map((m: { text: string }) => m.text)).toEqual(["M1?\n"]);
+    await post(docs, id, "M2?\n");
+    expect(inbox(docs, ["reply", id], "Answer to M1.\n").status).toBe(0);
+
+    const result = inbox(docs, ["wait", id, "--timeout", "0"]);
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).messages.map((m: { text: string }) => m.text)).toEqual(["M2?\n"]);
+  });
+
+  it("times out once every message of yours was delivered", async () => {
     const docs = tempDocs();
     const id = ask(docs);
     await post(docs, id, "Question?\n");
+    inbox(docs, ["wait", id, "--timeout", "0"]);
     inbox(docs, ["reply", id], "Answer.\n");
 
     const result = inbox(docs, ["wait", id, "--timeout", "1"]);

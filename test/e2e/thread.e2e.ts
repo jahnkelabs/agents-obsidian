@@ -13,6 +13,7 @@ import {
   markWindow,
   openItem,
   readBytes,
+  reply,
   reset,
   tab,
   windowKept,
@@ -38,6 +39,10 @@ describe("an item's thread", () => {
     expect(item.thread).toEqual([{ author: "you", at: expect.any(String), text: MESSAGE }]);
     expect(item.status).toBe("awaiting-you");
     expect(bodyBytes(M1_NEWER).equals(body)).toBe(true);
+
+    await expect(tab("m1-newer").$(".agents-inbox-waiting")).toBeDisplayed();
+    reply("m1-newer", "Yes.\n");
+    await tab("m1-newer").$(".agents-inbox-waiting").waitForDisplayed({ reverse: true, timeoutMsg: "the waiting line stayed after the reply" });
   });
 
   it("sends with Cmd/Ctrl+Enter, while Enter adds a line", async () => {
@@ -95,6 +100,7 @@ describe("an item's thread", () => {
     expect(await composer("m1-newer").getProperty("readOnly")).toBe(true);
     await expectNoAnsweringControls(tab("m1-newer"));
     await expect(tab("m1-newer").$("button.agents-inbox-copy-draft")).toBeDisplayed();
+    await expect(tab("m1-newer").$(".agents-inbox-not-sent")).toBeDisplayed();
     expect(readBytes(M1_NEWER).toString("utf8")).toBe(text);
     expect(itemAt(M1_NEWER).thread).toEqual([]);
   });

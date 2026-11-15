@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
-import { type Answerer, type Item, type Kind, type Message, type Select, SchemaError } from "../schema";
-import { answerItem, answerOf, appendMessage, createItem, docsDir, findItem, readItem, reviseChoices } from "../store";
+import { type Answerer, type Item, type Kind, type Message, type Select, SchemaError, shaped } from "../schema";
+import { answerItem, answerOf, appendMessage, createItem, deliverMessages, docsDir, findItem, readItem, reviseChoices } from "../store";
 
 const EXIT_ERROR = 2;
 const EXIT_LOST = 3;
@@ -55,7 +55,7 @@ async function ask(args: string[]): Promise<number> {
     status: "awaiting-you",
     select,
     options: values.option ?? [],
-    recommended: values.recommended === undefined ? null : labels(select, values.recommended),
+    recommended: values.recommended === undefined ? null : shaped(select, values.recommended),
     thread: [],
     answer: null,
     note: null,
@@ -90,10 +90,17 @@ async function wait(args: string[]): Promise<number> {
         console.log(JSON.stringify({ event: "answer", ...answerOf(item) }));
         return 0;
       }
-      const messages = unanswered(item.thread);
-      if (messages.length > 0) {
-        console.log(JSON.stringify({ event: "message", messages }));
-        return 0;
+      if (item.thread.some((message) => message.author === "you" && message.delivered_at === undefined)) {
+        const delivery = await deliverMessages(path);
+        if (delivery.item.status === "answered") {
+          console.log(JSON.stringify({ event: "answer", ...answerOf(delivery.item) }));
+          return 0;
+        }
+        if (delivery.messages.length > 0) {
+          const messages = delivery.messages.map(({ author, at, text }) => ({ author, at, text }));
+          console.log(JSON.stringify({ event: "message", messages }));
+          return 0;
+        }
       }
     } catch (error) {
       const missing = (error as NodeJS.ErrnoException).code === "ENOENT";
@@ -171,11 +178,13 @@ async function answer(args: string[]): Promise<number> {
     throw new Error("give exactly one of --option or --text");
   }
   const path = locate(positionals);
+  const { select, options } = readItem(path);
 
   const { won, stale, item } = await answerItem(path, {
     answer: values.option ?? values.text!,
     note: values.note ?? null,
     answered_by: values.by as Answerer,
+    basis: { select, options },
   });
   if (stale) {
     const { select, options, recommended } = item;
@@ -184,15 +193,6 @@ async function answer(args: string[]): Promise<number> {
   }
   console.log(JSON.stringify(answerOf(item)));
   return won ? 0 : EXIT_LOST;
-}
-
-function labels(select: Select, given: string[]): string | string[] {
-  return select === "one" && given.length === 1 ? given[0] : given;
-}
-
-function unanswered(thread: Message[]): Message[] {
-  const lastReply = thread.map((message) => message.author).lastIndexOf("agent");
-  return thread.slice(lastReply + 1);
 }
 
 function locate(positionals: string[]): string {

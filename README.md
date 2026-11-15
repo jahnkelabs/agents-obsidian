@@ -16,11 +16,11 @@ inbox wait "$id" --timeout 3600
 
 Answer from a terminal with `inbox answer "$id" --option yaml --note "keep it simple"`.
 
-`inbox ask --select many` asks a pick-many question, and its answer is a list of labels. `inbox wait` also returns on a message you post in Obsidian, as `{"event":"message","messages":[…]}`. The agent answers it with `inbox reply "$id"`, which reads markdown on stdin, and then waits again.
+`inbox ask --select many` asks a pick-many question, and its answer is a list of labels. `inbox wait` also returns on a message you post in Obsidian, as `{"event":"message","messages":[…]}`. It returns each message once, and marks it with `delivered_at` in the item, so a message you post while the agent writes its reply reaches the next `wait`. The agent answers it with `inbox reply "$id"`, which reads markdown on stdin, and then waits again.
 
 After a discussion, the agent can change the choices with `inbox revise "$id" --option yaml --option toml --recommended toml --note "toml reads better"`. It replaces `--select`, `--option`, and `--recommended`, or removes the choices with `--open`. A flag you leave out keeps its value, and a kept recommendation drops any label no longer offered. The thread records one agent entry naming what was added, what was removed, and the new recommendation. `inbox wait` does not wake on that entry. A revise on an answered item exits 3 and prints the winner.
 
-Once an item has a revision, an answer that no longer fits its current choices is refused under the lock. `inbox answer` then exits 5, writes nothing, and prints the current `select`, `options`, and `recommended`.
+An answer is checked under the lock against the choices its sender read. When a revise changed them in between, `inbox answer` exits 5, writes nothing, and prints the current `select`, `options`, and `recommended`. An answer that does not fit the choices it was sent against exits 2 and names the field.
 
 Exit codes: 0 success, 2 error, 3 another answer already won, 4 `wait` timed out, 5 the choices changed under your answer.
 
@@ -34,7 +34,7 @@ Ask the agent a clarifying question in the message box at the bottom of the thre
 
 Answer whenever you are ready. A pick-one item offers radio buttons, and a pick-many item offers checkboxes and needs at least one tick. Add an optional note, then click Answer. An item with no options takes the note as its answer. The tab answers through the same first-answer-wins store as the CLI, with `answered_by: inbox`, so a waiting `inbox wait` returns. An answered item accepts no more messages, and its tab shows the winning answer with no controls.
 
-When the agent revises the choices, an open tab shows the new choices in place and keeps your ticks on the choices that remain. A Notice names any ticked choice that was removed. An answer that arrives after the choices changed is refused and writes nothing, and the tab shows the current choices.
+When the agent revises the choices, an open tab shows the new choices in place and keeps your ticks on the choices that remain. A switch to pick-one keeps only the first tick. A Notice names every choice that lost its tick, and keeps any text you typed when the question opens or closes. An answer that arrives after the choices changed is refused and writes nothing, and the tab shows the current choices.
 
 Install it into your vault, then enable "Agents" under Settings → Community plugins:
 

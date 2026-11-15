@@ -1,6 +1,7 @@
+import { writeFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { parse } from "../src/schema";
-import { ask, inbox, post, readText, tempDocs } from "./cli";
+import { ask, inbox, itemPath, post, readText, tempDocs } from "./cli";
 
 describe("inbox reply", () => {
   it("appends the agent's markdown from stdin and prints the message count", async () => {
@@ -19,6 +20,22 @@ describe("inbox reply", () => {
     expect(Date.parse(item.thread[1].at)).toBeGreaterThanOrEqual(Date.parse(item.thread[0].at));
     expect(item.body).toBe(body);
     expect(item.status).toBe("awaiting-you");
+  });
+
+  it("stamps a reply no earlier than a future-dated last message", async () => {
+    const docs = tempDocs();
+    const id = ask(docs);
+    await post(docs, id, "Clock ahead.\n");
+    const stamped = parse(readText(docs, id)).thread[0].at;
+    writeFileSync(itemPath(docs, id), readText(docs, id).replace(stamped, "2099-01-01T00:00:00.000Z"));
+
+    const result = inbox(docs, ["reply", id], "Noted.\n");
+
+    expect(result.status).toBe(0);
+    const { thread } = parse(readText(docs, id));
+    expect(thread[1].at).toBe(thread[0].at);
+    await post(docs, id, "And again.\n");
+    expect(parse(readText(docs, id)).thread[2].at).toBe(thread[0].at);
   });
 
   it("replies to an item with no messages yet", () => {

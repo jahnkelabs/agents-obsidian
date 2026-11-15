@@ -144,10 +144,7 @@ function answeredText(rel: string, answer: string, answered_by: Answerer): strin
 }
 
 export function answerUnderLock(rel: string, answer: string, answered_by: Answerer): void {
-  const path = join(vault(), rel);
-  const tmp = join(dirname(path), `.e2e-${process.pid}.tmp`);
-  writeFileSync(tmp, answeredText(rel, answer, answered_by));
-  renameSync(tmp, path);
+  writeUnderLock(rel, answeredText(rel, answer, answered_by));
 }
 
 export function rewrittenText(rel: string, changes: Partial<Item>): string {
@@ -250,7 +247,7 @@ export async function openInbox(): Promise<void> {
   });
 }
 
-export async function dismissNotices(): Promise<void> {
+async function dismissNotices(): Promise<void> {
   await browser.execute(() => document.querySelectorAll(".notice").forEach((notice) => notice.remove()));
 }
 

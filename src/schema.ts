@@ -20,11 +20,20 @@ export interface Revision {
   recommended: string[];
 }
 
+export function shaped(select: Select, labels: string[]): string | string[] {
+  return select === "one" && labels.length === 1 ? labels[0] : labels;
+}
+
+export function labelsOf(value: string | string[] | null): string[] {
+  return [value ?? []].flat();
+}
+
 export interface Message {
   author: Author;
   at: string;
   text: string;
   revision?: Revision;
+  delivered_at?: string;
 }
 
 export interface Item {
@@ -138,6 +147,7 @@ export function validate(value: object): asserts value is Item {
     Array.isArray(item.options) && item.options.every((o) => typeof o === "string" && o !== ""),
     "must be a list of labels",
   );
+  check("options", new Set(item.options as string[]).size === (item.options as string[]).length, "must not repeat a label");
 
   const options = item.options as string[];
   const isOption = (v: unknown) => options.includes(v as string);
@@ -179,7 +189,7 @@ function checkThread(thread: unknown): void {
   (thread as unknown[]).forEach((message, index) => {
     const which = `message ${index + 1}`;
     check("thread", typeof message === "object" && message !== null && !Array.isArray(message), `${which} must be a mapping`);
-    const { author, at: time, text, revision } = message as Record<string, unknown>;
+    const { author, at: time, text, revision, delivered_at } = message as Record<string, unknown>;
     check("thread", oneOf(author, AUTHORS), `${which} author must be one of ${AUTHORS.join(", ")}`);
     check("thread", isTimestamp(time), `${which} at must be an ISO 8601 timestamp`);
     check("thread", typeof text === "string", `${which} text must be a string`);
@@ -188,6 +198,10 @@ function checkThread(thread: unknown): void {
     } else {
       check("thread", author === "agent", `${which} revision must come from the agent`);
       checkRevision(revision, which);
+    }
+    if (delivered_at !== undefined) {
+      check("thread", author === "you", `${which} delivered_at belongs only on your message`);
+      check("thread", isTimestamp(delivered_at), `${which} delivered_at must be an ISO 8601 timestamp`);
     }
     const current = Date.parse(time as string);
     check("thread", current >= previous, `${which} at must not precede the message before it`);

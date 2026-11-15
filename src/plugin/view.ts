@@ -1,11 +1,11 @@
 import { ItemView, setIcon, type WorkspaceLeaf } from "obsidian";
 import { age, type Broken, type Entry, type Group, groupKey, listAwaiting, title, unread } from "./inbox";
+import { place, REFRESH_DELAY_MS } from "./dom";
 import { ITEM_VIEW_TYPE } from "./item-view";
 import type AgentsPlugin from "./main";
 
 export const VIEW_TYPE = "agents-inbox";
 
-const REFRESH_DELAY_MS = 16;
 const AGE_INTERVAL_MS = 60_000;
 
 interface Row {
@@ -172,11 +172,3 @@ function newSection(g: Group): Section {
   return { el, title };
 }
 
-export function place(parent: HTMLElement, nodes: HTMLElement[]): void {
-  const keep = new Set<Element>(nodes);
-  for (const child of [...parent.children]) if (!keep.has(child)) child.remove();
-  nodes.forEach((node, index) => {
-    const at = parent.children.item(index);
-    if (at !== node) parent.insertBefore(node, at);
-  });
-}

@@ -107,4 +107,12 @@ describe("inbox ask", () => {
     expect(result.status).toBe(2);
     expect(result.stderr).toMatch(/kind:/);
   });
+
+  it("rejects an option label given twice", () => {
+    const docs = tempDocs();
+    const result = inbox(docs, ["ask", "--kind", "decide", "--from", "plan · s1", "--option", "a", "--option", "a"], BODY);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toMatch(/^inbox: options: must not repeat a label/m);
+  });
 });

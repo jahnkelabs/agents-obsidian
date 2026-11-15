@@ -11,21 +11,24 @@ import {
   type ViewStateResult,
   type WorkspaceLeaf,
 } from "obsidian";
-import type { Item, Message } from "../schema";
+import { type Item, labelsOf, type Message } from "../schema";
 import { answerItem, appendMessage, readItem } from "../store";
 import { age, answerText, title } from "./inbox";
 import type AgentsPlugin from "./main";
-import { place } from "./view";
+import { place, REFRESH_DELAY_MS } from "./dom";
 
 export const ITEM_VIEW_TYPE = "agents-inbox-item";
-
-const REFRESH_DELAY_MS = 16;
 
 type Loaded = { kind: "item"; item: Item } | { kind: "missing" } | { kind: "broken"; error: string };
 
 interface Rendered {
   key: string;
   el: HTMLElement;
+  component: Component;
+}
+
+interface RenderedBody {
+  key: string;
   component: Component;
 }
 
@@ -55,7 +58,7 @@ export class InboxItemView extends ItemView {
   private readonly dockEl = createDiv({ cls: "agents-inbox-dock" });
   private readonly metaEl = createDiv({ cls: "agents-inbox-item-meta" });
   private readonly bodyEl = createDiv({ cls: "agents-inbox-body markdown-rendered" });
-  private body: Rendered | null = null;
+  private body: RenderedBody | null = null;
   private readonly threadEl = createDiv({ cls: "agents-inbox-thread" });
   private messages: Rendered[] = [];
   private readonly waitingEl = createDiv({ cls: "agents-inbox-waiting" });
@@ -132,6 +135,7 @@ export class InboxItemView extends ItemView {
         if (leaf === this.leaf) this.see();
       }),
     );
+    this.registerDomEvent(document, "visibilitychange", () => this.see());
   }
 
   async onClose(): Promise<void> {
@@ -194,8 +198,13 @@ export class InboxItemView extends ItemView {
       const key = JSON.stringify([item.select, item.options, item.recommended]);
       if (this.answerSection?.key !== key) {
         const previous = this.answerSection;
-        this.answerSection = this.buildAnswer(item, key, previous);
-        if (previous) this.choicesChanged(previous.picked().filter((option) => !item.options.includes(option)));
+        const next = this.buildAnswer(item, key, previous);
+        this.answerSection = next;
+        if (previous) {
+          const ticked = next.picked();
+          const moved = previous.open !== next.open && previous.note().trim() !== "";
+          this.choicesChanged(previous.picked().filter((option) => !ticked.includes(option)), moved ? (next.open ? "answer" : "note") : null);
+        }
       }
     } else {
       this.showAnswered(item);
@@ -266,7 +275,7 @@ export class InboxItemView extends ItemView {
     if (this.body) this.removeChild(this.body.component);
     this.bodyEl.empty();
     const component = this.addChild(new Component());
-    this.body = { key: item.body, el: this.bodyEl, component };
+    this.body = { key: item.body, component };
     await MarkdownRenderer.render(this.app, item.body, this.bodyEl, this.path, component);
     const first = this.bodyEl.firstElementChild;
     if (first instanceof HTMLElement && first.textContent?.trim() === title(item)) first.addClass("agents-inbox-item-title");
@@ -316,16 +325,17 @@ export class InboxItemView extends ItemView {
     return { key, el, component };
   }
 
-  private choicesChanged(unticked: string[]): void {
+  private choicesChanged(unticked: string[], movedTo: "answer" | "note" | null): void {
     const what = unticked.length > 0 ? `, so ${unticked.join(", ")} is no longer ticked` : "";
-    new Notice(`Inbox: the agent revised the choices${what}.`);
+    const kept = movedTo === null ? "" : ` Your text is kept in the ${movedTo} field.`;
+    new Notice(`Inbox: the agent revised the choices${what}.${kept}`);
   }
 
   private buildAnswer(item: Item, key: string, previous: AnswerSection | null): AnswerSection {
     const el = createDiv({ cls: "agents-inbox-answer-section" });
     const open = item.options.length === 0;
     const many = item.select === "many";
-    const recommended = item.recommended === null ? [] : [item.recommended].flat();
+    const recommended = labelsOf(item.recommended);
 
     el.createDiv({
       cls: "agents-inbox-answer-label",
@@ -354,7 +364,7 @@ export class InboxItemView extends ItemView {
 
     const kept = previous?.picked().filter((option) => item.options.includes(option)) ?? [];
     for (const input of inputs) input.checked = (many ? kept : kept.slice(0, 1)).includes(input.value);
-    if (previous?.open === open) note.value = previous.note();
+    if (previous) note.value = previous.note();
 
     const picked = () => inputs.filter((input) => input.checked).map((input) => input.value);
     const chosen = (): string | string[] | null => {
@@ -413,10 +423,11 @@ export class InboxItemView extends ItemView {
   }
 
   private async answer(answer: string | string[], note: string | null): Promise<void> {
-    if (this.busy) return;
+    if (this.busy || this.item === null) return;
+    const basis = { select: this.item.select, options: this.item.options };
     this.setBusy(true);
     try {
-      const { stale } = await answerItem(this.absolute(), { answer, note, answered_by: "inbox" });
+      const { stale } = await answerItem(this.absolute(), { answer, note, answered_by: "inbox", basis });
       if (stale) new Notice("Inbox: the choices changed before your answer arrived, so nothing was sent. Choose again.");
     } catch (error) {
       new Notice(`Inbox: ${(error as Error).message}`);
@@ -427,7 +438,9 @@ export class InboxItemView extends ItemView {
   }
 
   private see(): void {
-    if (this.item === null || !this.containerEl.isShown()) return;
-    void this.plugin.markSeen({ id: basename(this.path, ".md"), path: this.absolute(), item: this.item });
+    if (this.item === null || !this.containerEl.isShown() || document.visibilityState !== "visible") return;
+    this.plugin.markSeen({ id: basename(this.path, ".md"), path: this.absolute(), item: this.item }).catch((error) => {
+      new Notice(`Inbox: ${(error as Error).message}`);
+    });
   }
 }

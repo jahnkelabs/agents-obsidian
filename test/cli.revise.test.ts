@@ -1,7 +1,8 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import { parse } from "../src/schema";
-import { ask, inbox, inboxAsync, post, readText, tempDocs } from "./cli";
+import { answerItem } from "../src/store";
+import { ask, inbox, inboxAsync, itemPath, post, readText, tempDocs } from "./cli";
 
 const ROUNDS = 12;
 
@@ -131,10 +132,60 @@ describe("inbox revise", () => {
       messages: [{ author: "you", at: expect.any(String), text: "What does maybe mean?\n" }],
     });
   });
+
+  it("leaves your message for inbox wait when a revision follows it", async () => {
+    const docs = tempDocs();
+    const id = ask(docs, ["--option", "a", "--option", "b"]);
+    await post(docs, id, "What about c?\n");
+    expect(inbox(docs, ["revise", id, "--option", "a", "--option", "b", "--option", "c", "--note", "Added c."]).status).toBe(0);
+
+    const result = inbox(docs, ["wait", id, "--timeout", "0"]);
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      event: "message",
+      messages: [{ author: "you", at: expect.any(String), text: "What about c?\n" }],
+    });
+  });
+
+  it("refuses an option label given twice", () => {
+    const docs = tempDocs();
+    const id = ask(docs, ["--option", "a", "--option", "b"]);
+    const before = readText(docs, id);
+
+    const result = inbox(docs, ["revise", id, "--option", "a", "--option", "a", "--option", "c"]);
+
+    expect(result.status).toBe(2);
+    expect(result.stderr).toMatch(/^inbox: options: must not repeat a label/m);
+    expect(readText(docs, id)).toBe(before);
+  });
 });
 
 describe("an answer against revised choices", () => {
-  it("refuses a removed label, exits 5, prints the current choices, and writes nothing", () => {
+  it.each([
+    ["a removed label", [], ["--option", "yes", "--option", "maybe"], ["no"]],
+    ["a label after --open", ["--select", "many"], ["--open"], ["yes"]],
+    ["text after an open question gains options", null, ["--option", "a", "--option", "b"], "free words"],
+    ["two labels after pick-many becomes pick-one", ["--select", "many"], ["--select", "one"], ["yes", "no"]],
+  ] as const)("refuses %s sent against the earlier choices, and writes nothing", async (_, askArgs, reviseArgs, answer) => {
+    const docs = tempDocs();
+    const id = ask(docs, askArgs === null ? [] : [...askArgs, "--option", "yes", "--option", "no"]);
+    const { select, options } = parse(readText(docs, id));
+    expect(inbox(docs, ["revise", id, ...reviseArgs]).status).toBe(0);
+    const before = readText(docs, id);
+
+    const result = await answerItem(itemPath(docs, id), {
+      answer: typeof answer === "string" ? answer : [...answer],
+      note: null,
+      answered_by: "inbox",
+      basis: { select, options },
+    });
+
+    expect(result).toMatchObject({ won: false, stale: true });
+    expect(readText(docs, id)).toBe(before);
+  });
+
+  it("exits 2 and names the field for a label the revised choices no longer offer", () => {
     const docs = tempDocs();
     const id = ask(docs, ["--option", "yes", "--option", "no"]);
     inbox(docs, ["revise", id, "--option", "yes", "--option", "maybe", "--recommended", "maybe"]);
@@ -142,25 +193,8 @@ describe("an answer against revised choices", () => {
 
     const result = inbox(docs, ["answer", id, "--option", "no"]);
 
-    expect(result.status).toBe(5);
-    expect(JSON.parse(result.stdout)).toEqual({ stale: true, select: "one", options: ["yes", "maybe"], recommended: "maybe" });
-    expect(readText(docs, id)).toBe(before);
-  });
-
-  it.each([
-    ["a label after --open", ["--select", "many", "--option", "a", "--option", "b"], ["--open"], ["--option", "a"]],
-    ["text after an open question gains options", [], ["--option", "a", "--option", "b"], ["--text", "free words"]],
-    ["two labels after pick-many becomes pick-one", ["--select", "many", "--option", "a", "--option", "b"], ["--select", "one"], ["--option", "a", "--option", "b"]],
-  ])("refuses %s and writes nothing", (_, askArgs, reviseArgs, answerArgs) => {
-    const docs = tempDocs();
-    const id = ask(docs, askArgs);
-    expect(inbox(docs, ["revise", id, ...reviseArgs]).status).toBe(0);
-    const before = readText(docs, id);
-
-    const result = inbox(docs, ["answer", id, ...answerArgs]);
-
-    expect(result.status).toBe(5);
-    expect(JSON.parse(result.stdout).stale).toBe(true);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toMatch(/^inbox: answer: must be one of the options/m);
     expect(readText(docs, id)).toBe(before);
   });
 
@@ -192,7 +226,8 @@ describe("an answer against revised choices", () => {
         expect(item).toMatchObject({ status: "answered", answer: "drop", options: ["keep", "drop"] });
         expect(revisions).toEqual([]);
       } else {
-        expect([revised.status, answered.status]).toEqual([0, 5]);
+        expect(revised.status).toBe(0);
+        expect([2, 5]).toContain(answered.status);
         expect(item).toMatchObject({ status: "awaiting-you", answer: null, options: ["keep", "new"] });
         expect(revisions).toHaveLength(1);
       }

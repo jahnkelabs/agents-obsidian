@@ -65,6 +65,19 @@ describe("the sidebar list and the item tab", () => {
     await expect(unreadMark(id)).not.toExist();
   });
 
+  it("keeps a row unread when the reply reaches an item tab behind another tab, and clears it when you switch to that tab", async () => {
+    await openItem("m1-newer");
+    await openItem("m1-earlier");
+
+    reply("m1-newer", "A reply you have not seen\n");
+    await unreadMark("m1-newer").waitForExist();
+    await browser.pause(500);
+    await expect(unreadMark("m1-newer")).toExist();
+
+    await openItem("m1-newer");
+    await unreadMark("m1-newer").waitForExist({ reverse: true });
+  });
+
   it("opens a row in a main-area tab, and a second click focuses that same tab", async () => {
     await openItem("m1-newer");
     expect(await itemTabs()).toEqual({ paths: [M1_NEWER], active: M1_NEWER, inRoot: true });
